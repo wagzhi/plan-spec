@@ -1,0 +1,5 @@
+node_modules/
+dist/
+*.tgz
+.plan-spec-test/
+PUBLISHING.md

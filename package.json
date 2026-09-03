@@ -1,0 +1,37 @@
+{
+  "name": "@wagzhi/plan-spec",
+  "version": "0.1.0",
+  "description": "Install and manage the plan-spec workflow for OpenCode.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "plan-spec": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "assets",
+    "README.md",
+    "README.zh-CN.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test tests/**/*.test.mjs",
+    "pack:check": "npm pack --dry-run"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@clack/prompts": "^0.11.0",
+    "commander": "^13.1.0",
+    "jsonc-parser": "^3.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "typescript": "^5.8.3"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
