@@ -1,9 +1,12 @@
 {
   "name": "@wagzhi/plan-spec",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Install and manage the plan-spec workflow for OpenCode.",
   "license": "MIT",
   "type": "module",
+  "workspaces": [
+    "plugin"
+  ],
   "bin": {
     "plan-spec": "dist/cli.js"
   },

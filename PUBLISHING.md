@@ -1,6 +1,6 @@
 # 打包与发布
 
-本文档说明如何将 `@wagzhi/plan-spec` 打包并发布到 npm。发布前请确认 npm 账号拥有 `@wagzhi` scope 的公开包发布权限。
+本文档说明如何将 `@wagzhi/plan-spec` 和 `@wagzhi/plan-spec-plugin` 打包并发布到 npm。发布前请确认 npm 账号拥有 `@wagzhi` scope 的公开包发布权限。
 
 ## 前置条件
 
@@ -19,7 +19,7 @@ npm access ls-packages @wagzhi
 
 ## 发布前检查
 
-1. 更新 `package.json` 中的 `version`，遵循语义化版本。
+1. 更新根目录及 `plugin/package.json` 中待发布包的 `version`，遵循语义化版本。
 2. 安装锁定依赖并运行完整检查：
 
 ```powershell
@@ -27,12 +27,14 @@ npm ci
 npm test
 npm audit --omit=dev
 npm run pack:check
+npm pack --dry-run ./plugin
 ```
 
 3. 创建本地 tarball：
 
 ```powershell
 npm pack
+npm pack ./plugin
 ```
 
 4. 在隔离目录中验证 tarball。以下示例不会修改真实 OpenCode 配置：
@@ -40,29 +42,30 @@ npm pack
 ```powershell
 $testRoot = Join-Path $env:TEMP "plan-spec-publish-test"
 $env:PLAN_SPEC_HOME = Join-Path $testRoot "home"
-$env:PLAN_SPEC_NO_PERSIST_ENV = "1"
 
 npx --yes .\wagzhi-plan-spec-<version>.tgz install `
-  --yes --skip-secrets --no-persist-env `
+  --yes --skip-secrets `
   --config-dir (Join-Path $testRoot "opencode")
 
 npx --yes .\wagzhi-plan-spec-<version>.tgz doctor `
   --config-dir (Join-Path $testRoot "opencode")
 ```
 
-确认 tarball 仅包含 `dist/`、`assets/`、许可证、README 和 `package.json`，不应包含测试产物、`node_modules`、本地密钥或真实配置。
+确认安装器 tarball 仅包含 `dist/`、`assets/`、许可证、README 和 `package.json`，插件 tarball 仅包含 `index.js`、README 和 `package.json`；两者均不应包含测试产物、`node_modules`、本地密钥或真实配置。
 
 ## 发布
 
-`package.json` 已设置 `publishConfig.access` 为 `public`。先执行 dry-run：
+两个包的 `package.json` 均已设置 `publishConfig.access` 为 `public`。先执行 dry-run：
 
 ```powershell
+npm publish --dry-run ./plugin
 npm publish --dry-run
 ```
 
-确认输出的包名、版本和文件清单正确后发布：
+确认输出的包名、版本和文件清单正确后，先发布插件，再发布安装器：
 
 ```powershell
+npm publish ./plugin
 npm publish
 ```
 
@@ -110,6 +113,7 @@ npm error 403 Forbidden - PUT <url> - Two-factor authentication or granular acce
 npx @wagzhi/plan-spec --help
 npx @wagzhi/plan-spec install --help
 npm view @wagzhi/plan-spec version dist-tags --json
+npm view @wagzhi/plan-spec-plugin version dist-tags --json
 ```
 
 然后使用临时 `PLAN_SPEC_HOME` 和 `--config-dir` 执行一次 `install` 与 `doctor`，确认公开 registry 产物可用。

@@ -1,15 +1,14 @@
+import { spawnSync } from "node:child_process"
 import { createHash } from "node:crypto"
 import { copyFile, cp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { homedir, platform } from "node:os"
 import { basename, dirname, join, resolve } from "node:path"
-import { spawnSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
 import { applyEdits, modify, parse, ParseError } from "jsonc-parser"
 
 export type Options = {
   configDir?: string
   yes?: boolean
-  persistEnv?: boolean
   skipSecrets?: boolean
   disableMcp?: string[]
   model?: string[]
@@ -18,17 +17,20 @@ export type Options = {
 type Manifest = {
   version: string
   configDir: string
-  personalConfig: string
+  planSpecConfig: string
+  planSpecConfigExisted: boolean
   files: Record<string, string>
   configBefore: Record<string, unknown>
-  agentsBefore: Record<string, unknown>
   managedModels: Record<string, string>
   managedMcps: Record<string, unknown>
-  removedPlugin?: unknown
+  managedPlugin: unknown
+  pluginBefore?: unknown
 }
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..")
 const assets = join(packageRoot, "assets")
+const planSpecPlugin = "@wagzhi/plan-spec-plugin@^0.2.0"
+const manifestVersion = "0.2.0"
 const managedBlock = `<!-- plan-spec-package:begin -->
 ## Plan-Spec Routing
 
@@ -69,10 +71,6 @@ const mcps = {
   },
 }
 
-function pathFromFileUrl(path: string) {
-  return process.platform === "win32" && path.startsWith("/") ? path.slice(1) : path
-}
-
 function hash(value: Buffer | string) {
   return createHash("sha256").update(value).digest("hex")
 }
@@ -89,15 +87,15 @@ export function resolveConfigDir(options: Options) {
   return resolve(options.configDir ?? process.env.OPENCODE_CONFIG_DIR ?? join(homedir(), ".config", "opencode"))
 }
 
+function planSpecConfigPath(dir: string) {
+  return join(dir, "plan-spec.jsonc")
+}
+
 async function configPath(dir: string) {
   const jsonc = join(dir, "opencode.jsonc")
   const json = join(dir, "opencode.json")
   if (await exists(jsonc) && await exists(json)) throw new Error(`Both ${jsonc} and ${json} exist; keep only one config format.`)
   return (await exists(jsonc)) ? jsonc : (await exists(json)) ? json : jsonc
-}
-
-function personalConfig(dir: string, options: Options) {
-  return resolve(options.configDir ? join(dir, "opencode-personal.jsonc") : process.env.OPENCODE_CONFIG ?? join(dir, "opencode-personal.jsonc"))
 }
 
 async function loadJsonc(path: string) {
@@ -144,6 +142,10 @@ function getAt(data: Record<string, unknown>, path: string[]) {
     value = (value as Record<string, unknown>)[part]
   }
   return value
+}
+
+function same(value: unknown, expected: unknown) {
+  return JSON.stringify(value) === JSON.stringify(expected)
 }
 
 async function copyManaged(source: string, target: string, files: Record<string, string>) {
@@ -199,23 +201,17 @@ async function writeRouting(dir: string, files: Record<string, string>) {
   files[path] = hash(await readFile(path))
 }
 
-function previousPluginIndex(data: Record<string, unknown>) {
-  const plugins = data.plugin
-  if (!Array.isArray(plugins)) return -1
-  return plugins.findIndex((item) => typeof item === "string" && /(?:^|[\\/])plugin[\\/]plan-spec-plugin\.ts$/.test(item))
+function pluginName(item: unknown) {
+  if (typeof item === "string") return item
+  return Array.isArray(item) && typeof item[0] === "string" ? item[0] : undefined
 }
 
-async function persistOpenCodeConfig(path: string) {
-  if (process.env.PLAN_SPEC_NO_PERSIST_ENV === "1") return
-  if (platform() === "win32") {
-    const result = spawnSync("setx", ["OPENCODE_CONFIG", path], { stdio: "ignore", windowsHide: true })
-    if (result.status !== 0) throw new Error("Could not persist OPENCODE_CONFIG with setx.")
-    return
-  }
-  const profile = process.env.SHELL?.includes("zsh") ? join(homedir(), ".zshrc") : join(homedir(), ".profile")
-  const block = `# plan-spec:begin\nexport OPENCODE_CONFIG=${JSON.stringify(path)}\n# plan-spec:end`
-  const current = (await exists(profile)) ? await readFile(profile, "utf8") : ""
-  await writeFile(profile, /# plan-spec:begin[\s\S]*?# plan-spec:end/.test(current) ? current.replace(/# plan-spec:begin[\s\S]*?# plan-spec:end/, block) : `${current.trimEnd()}\n${block}\n`)
+function isPlanSpecPlugin(item: unknown) {
+  return /^@wagzhi\/plan-spec-plugin(?:@.+)?$/.test(pluginName(item) ?? "")
+}
+
+function pluginEntry(planSpecConfig: string) {
+  return [planSpecPlugin, { configPath: planSpecConfig }]
 }
 
 function configuredModels(overrides: string[] = []) {
@@ -228,49 +224,71 @@ function configuredModels(overrides: string[] = []) {
   return result
 }
 
+async function loadManifest() {
+  const path = join(planSpecHome(), "manifest.json")
+  if (!(await exists(path))) return undefined
+  const manifest = JSON.parse(await readFile(path, "utf8")) as Manifest
+  if (!/^0\.2\./.test(manifest.version)) throw new Error(`Unsupported plan-spec installation manifest version: ${manifest.version}. Uninstall version 0.1.x before installing 0.2.x.`)
+  return manifest
+}
+
+function addPreserved(preserved: string[], path: string) {
+  if (!preserved.includes(path)) preserved.push(path)
+}
+
+function isEmptyConfig(data: Record<string, unknown>): boolean {
+  return Object.entries(data).every(([key, value]) => key === "$schema" || (value !== null && typeof value === "object" && !Array.isArray(value) && isEmptyConfig(value as Record<string, unknown>)))
+}
+
 export async function install(options: Options, secrets: { gitee?: string; context7?: string } = {}) {
   const dir = resolveConfigDir(options)
+  const existingManifest = await loadManifest()
+  if (existingManifest && existingManifest.configDir !== dir) throw new Error(`Existing plan-spec installation belongs to ${existingManifest.configDir}. Use that config directory or uninstall it first.`)
+
   const global = await configPath(dir)
-  const personal = personalConfig(dir, options)
+  const planConfig = planSpecConfigPath(dir)
+  const planConfigExisted = await exists(planConfig)
+  const globalLoaded = await loadJsonc(global)
+  const planLoaded = await loadJsonc(planConfig)
   const files: Record<string, string> = {}
   const activeModels = configuredModels(options.model)
   const disabled = new Set(options.disableMcp ?? [])
   for (const name of disabled) if (!(name in mcps)) throw new Error(`Unknown MCP: ${name}`)
-  const globalLoaded = await loadJsonc(global)
-  const oldPlugin = previousPluginIndex(globalLoaded.data)
-  const removedPlugin = oldPlugin >= 0 ? (globalLoaded.data.plugin as unknown[])[oldPlugin] : undefined
   const activeMcps = Object.fromEntries(Object.entries(mcps).map(([name, value]) => [name, { ...value, enabled: !disabled.has(name) }]))
-  const globalChanges: Array<{ path: (string | number)[]; value: unknown; isDeletion?: boolean }> = [
+
+  const plugins = Array.isArray(globalLoaded.data.plugin) ? globalLoaded.data.plugin : []
+  const oldPlugin = plugins.findIndex(isPlanSpecPlugin)
+  const managedPlugin = pluginEntry(planConfig)
+  await writeJsonc(global, [{ path: ["plugin", oldPlugin >= 0 ? oldPlugin : plugins.length], value: managedPlugin }])
+
+  const planChanges: Array<{ path: (string | number)[]; value: unknown }> = [
+    ...Object.entries(activeModels).map(([name, model]) => ({ path: ["agent", name, "model"], value: model })),
     ...Object.entries(activeMcps).map(([name, value]) => ({ path: ["mcp", name], value })),
   ]
-  if (oldPlugin >= 0) globalChanges.push({ path: ["plugin", oldPlugin], value: undefined, isDeletion: true })
-  const globalResult = await writeJsonc(global, globalChanges)
-  const personalLoaded = await loadJsonc(personal)
-  const agentChanges = Object.entries(activeModels).map(([name, model]) => ({ path: ["agent", name, "model"], value: model }))
-  await writeJsonc(personal, agentChanges)
+  await writeJsonc(planConfig, planChanges)
   await copyTree(join(assets, "skills", "plan-spec"), join(dir, "skills", "plan-spec"), files)
   await writeManagedAgents(dir, files)
-  await copyManaged(join(assets, "plugins", "plan-spec-plugin.js"), join(dir, "plugins", "plan-spec-plugin.js"), files)
   await writeRouting(dir, files)
   if (!options.skipSecrets) {
     await writeSecret("gitee-access-token", secrets.gitee)
     await writeSecret("context7-api-key", secrets.context7)
   }
-  if (options.persistEnv !== false) await persistOpenCodeConfig(personal)
+
   const manifest: Manifest = {
-    version: "0.1.0",
+    version: manifestVersion,
     configDir: dir,
-    personalConfig: personal,
+    planSpecConfig: planConfig,
+    planSpecConfigExisted: existingManifest?.planSpecConfigExisted ?? planConfigExisted,
     files,
-    configBefore: { mcp: getAt(globalResult.before, ["mcp"]), plugin: getAt(globalResult.before, ["plugin"]) },
-    agentsBefore: Object.fromEntries(Object.keys(models).map((name) => [name, getAt(personalLoaded.data, ["agent", name, "model"])])),
+    configBefore: existingManifest?.configBefore ?? planLoaded.data,
     managedModels: activeModels,
     managedMcps: activeMcps,
-    removedPlugin,
+    managedPlugin,
+    pluginBefore: existingManifest?.pluginBefore ?? (oldPlugin >= 0 ? plugins[oldPlugin] : undefined),
   }
   await mkdir(planSpecHome(), { recursive: true, mode: 0o700 })
   await writeFile(join(planSpecHome(), "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`)
-  return { dir, global, personal }
+  return { dir, global, planSpecConfig: planConfig }
 }
 
 export async function doctor(options: Options) {
@@ -280,20 +298,27 @@ export async function doctor(options: Options) {
     ? spawnSync("where.exe", ["opencode"], { windowsHide: true })
     : spawnSync("opencode", ["--version"], { windowsHide: true })
   checks.push({ name: "opencode", ok: binaryCheck.status === 0, detail: "OpenCode executable" })
-  for (const path of [join(dir, "skills", "plan-spec", "SKILL.md"), join(dir, "plugins", "plan-spec-plugin.js"), ...Object.keys(models).map((name) => join(dir, "agents", `${name}.md`))]) {
+  for (const path of [join(dir, "skills", "plan-spec", "SKILL.md"), ...Object.keys(models).map((name) => join(dir, "agents", `${name}.md`))]) {
     checks.push({ name: basename(path), ok: await exists(path), detail: path })
   }
   try {
     const global = await loadJsonc(await configPath(dir))
     checks.push({ name: "config", ok: true, detail: "Global config parses" })
-    for (const name of Object.keys(mcps)) checks.push({ name: `${name} MCP`, ok: Boolean(getAt(global.data, ["mcp", name])), detail: "Managed MCP definition" })
+    checks.push({ name: "plan-spec plugin", ok: Array.isArray(global.data.plugin) && global.data.plugin.some(isPlanSpecPlugin), detail: planSpecPlugin })
   }
   catch (error) { checks.push({ name: "config", ok: false, detail: error instanceof Error ? error.message : String(error) }) }
-  const personal = personalConfig(dir, options)
-  const loaded = await loadJsonc(personal)
-  const manifestPath = join(planSpecHome(), "manifest.json")
-  const expectedModels = (await exists(manifestPath)) ? (JSON.parse(await readFile(manifestPath, "utf8")) as Manifest).managedModels : models
-  for (const [name, model] of Object.entries(expectedModels)) checks.push({ name: `${name} model`, ok: getAt(loaded.data, ["agent", name, "model"]) === model, detail: model })
+
+  const manifest = await loadManifest()
+  const planConfig = manifest?.planSpecConfig ?? planSpecConfigPath(dir)
+  try {
+    const config = await loadJsonc(planConfig)
+    checks.push({ name: "plan-spec config", ok: await exists(planConfig), detail: planConfig })
+    const expectedModels = manifest?.managedModels ?? models
+    const expectedMcps = manifest?.managedMcps ?? mcps
+    for (const [name, model] of Object.entries(expectedModels)) checks.push({ name: `${name} model`, ok: getAt(config.data, ["agent", name, "model"]) === model, detail: model })
+    for (const [name, mcp] of Object.entries(expectedMcps)) checks.push({ name: `${name} MCP`, ok: same(getAt(config.data, ["mcp", name]), mcp), detail: "Managed MCP definition" })
+  }
+  catch (error) { checks.push({ name: "plan-spec config", ok: false, detail: error instanceof Error ? error.message : String(error) }) }
   for (const secret of ["gitee-access-token", "context7-api-key"]) checks.push({ name: secret, ok: await exists(join(planSpecHome(), "secrets", secret)), detail: "Optional secret file" })
   return checks
 }
@@ -301,36 +326,44 @@ export async function doctor(options: Options) {
 export async function uninstall(options: Options) {
   const manifestPath = join(planSpecHome(), "manifest.json")
   if (!(await exists(manifestPath))) throw new Error("No plan-spec installation manifest found.")
-  const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as Manifest
+  const manifest = await loadManifest()
+  if (!manifest) throw new Error("No plan-spec installation manifest found.")
   const preserved: string[] = []
+
   for (const [path, expected] of Object.entries(manifest.files)) {
     if (!(await exists(path))) continue
-    if (hash(await readFile(path)) !== expected) { preserved.push(path); continue }
+    if (hash(await readFile(path)) !== expected) { addPreserved(preserved, path); continue }
     if (basename(path) === "AGENTS.md") {
       const text = await readFile(path, "utf8")
       await writeFile(path, text.replace(/\n?<!-- plan-spec-package:begin -->[\s\S]*?<!-- plan-spec-package:end -->\n?/, ""))
     } else await rm(path, { force: true })
   }
+
   const global = await configPath(manifest.configDir)
   const globalLoaded = await loadJsonc(global)
-  const mcpChanges: Array<{ path: (string | number)[]; value: unknown; isDeletion?: boolean }> = []
+  if (Array.isArray(globalLoaded.data.plugin)) {
+    const index = globalLoaded.data.plugin.findIndex((item) => same(item, manifest.managedPlugin))
+    if (index >= 0) await writeJsonc(global, [{ path: ["plugin", index], value: manifest.pluginBefore, isDeletion: manifest.pluginBefore === undefined }])
+  }
+
+  const config = await loadJsonc(manifest.planSpecConfig)
+  const configChanges: Array<{ path: (string | number)[]; value: unknown; isDeletion?: boolean }> = []
   for (const [name, expected] of Object.entries(manifest.managedMcps)) {
-    if (JSON.stringify(getAt(globalLoaded.data, ["mcp", name])) !== JSON.stringify(expected)) continue
-    const previous = getAt(manifest.configBefore.mcp as Record<string, unknown> ?? {}, [name])
-    mcpChanges.push({ path: ["mcp", name], value: previous, isDeletion: previous === undefined })
+    if (!same(getAt(config.data, ["mcp", name]), expected)) { addPreserved(preserved, manifest.planSpecConfig); continue }
+    const previous = getAt(manifest.configBefore, ["mcp", name])
+    configChanges.push({ path: ["mcp", name], value: previous, isDeletion: previous === undefined })
   }
-  if (manifest.removedPlugin !== undefined && Array.isArray(globalLoaded.data.plugin) && !globalLoaded.data.plugin.includes(manifest.removedPlugin)) {
-    mcpChanges.push({ path: ["plugin", globalLoaded.data.plugin.length], value: manifest.removedPlugin })
-  }
-  if (mcpChanges.length) await writeJsonc(global, mcpChanges)
-  const personalLoaded = await loadJsonc(manifest.personalConfig)
-  const agentChanges: Array<{ path: (string | number)[]; value: unknown; isDeletion?: boolean }> = []
   for (const [name, expected] of Object.entries(manifest.managedModels)) {
-    if (getAt(personalLoaded.data, ["agent", name, "model"]) !== expected) continue
-    const previous = manifest.agentsBefore[name]
-    agentChanges.push({ path: ["agent", name, "model"], value: previous, isDeletion: previous === undefined })
+    if (getAt(config.data, ["agent", name, "model"]) !== expected) { addPreserved(preserved, manifest.planSpecConfig); continue }
+    const previous = getAt(manifest.configBefore, ["agent", name, "model"])
+    configChanges.push({ path: ["agent", name, "model"], value: previous, isDeletion: previous === undefined })
   }
-  if (agentChanges.length) await writeJsonc(manifest.personalConfig, agentChanges)
+  if (configChanges.length) await writeJsonc(manifest.planSpecConfig, configChanges)
+  if (!manifest.planSpecConfigExisted && await exists(manifest.planSpecConfig)) {
+    const after = await loadJsonc(manifest.planSpecConfig)
+    if (isEmptyConfig(after.data)) await rm(manifest.planSpecConfig, { force: true })
+  }
+
   await rm(manifestPath, { force: true })
   return preserved
 }

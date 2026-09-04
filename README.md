@@ -9,14 +9,18 @@ and the MCP configuration those agents use.
 npx @wagzhi/plan-spec install
 ```
 
-The installer copies managed assets to OpenCode's global configuration directory,
-merges MCP configuration without rewriting unrelated JSONC content, and writes
-models only to `opencode-personal.jsonc`. It guides OpenCode Go authentication
-through `/connect`; it never writes OpenCode's auth store.
+The installer copies managed skills and agents to OpenCode's global configuration
+directory, registers `@wagzhi/plan-spec-plugin@^0.2.0` as a minimal OpenCode
+plugin bootstrap, and writes the managed agent models and MCP definitions only to
+`~/.config/opencode/plan-spec.jsonc`. OpenCode installs npm plugins with Bun at
+startup, so Bun must be available. It guides OpenCode Go authentication through
+`/connect`; it never writes OpenCode's auth store.
 
 Secrets are stored in `~/.plan-spec/secrets/` and referenced with OpenCode
 `{file:...}` variables. Run `npx @wagzhi/plan-spec config` to change MCP choices,
-secrets, or the five installed agent model mappings.
+secrets, or the five installed agent model mappings. `--config-dir` changes the
+OpenCode configuration root for custom deployments and tests; otherwise the managed
+file is `~/.config/opencode/plan-spec.jsonc`.
 
 ```sh
 # Keep all managed files but disable the browser MCP and choose a different model.

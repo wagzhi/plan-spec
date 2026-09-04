@@ -13,13 +13,12 @@ async function secret(label: string, enabled: boolean, skip: boolean) {
 function common(command: Command) {
   return command.option("--config-dir <path>", "OpenCode global configuration directory")
     .option("-y, --yes", "use default choices without prompts")
-    .option("--no-persist-env", "do not persist OPENCODE_CONFIG")
     .option("--skip-secrets", "do not request or update secret files")
     .option("--disable-mcp <names...>", "disable one or more managed MCPs")
     .option("--model <agent=model...>", "override a managed agent model")
 }
 
-const program = new Command().name("plan-spec").description("Install and manage plan-spec for OpenCode").version("0.1.0")
+const program = new Command().name("plan-spec").description("Install and manage plan-spec for OpenCode").version("0.2.0")
 
 common(program.command("install").description("Install all managed OpenCode resources")).action(async (options: Options) => {
   intro("plan-spec install")
@@ -36,7 +35,7 @@ common(program.command("config").description("Reapply managed configuration and 
     gitee: await secret("New Gitee access token", true, Boolean(options.skipSecrets || options.yes)),
     context7: await secret("New Context7 API key", true, Boolean(options.skipSecrets || options.yes)),
   })
-  outro(`Configuration updated: ${result.personal}`)
+  outro(`Configuration updated: ${result.planSpecConfig}`)
 })
 
 program.command("doctor").description("Verify the installation").option("--config-dir <path>").option("--json", "JSON output").action(async (options: Options & { json?: boolean }) => {
