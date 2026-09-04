@@ -29,19 +29,22 @@ test("plugin loads only the configured plan-spec.jsonc", async () => {
     await writeFile(configPath, `{
       // JSONC comments are supported
       "agent": { "explore": { "model": "model-a" } },
+      "permission": { "context7_*": "deny" },
       "files": ["${ignoredPath.replaceAll("\\", "\\\\")}"]
     }`)
     await writeFile(ignoredPath, '{"agent":{"explore":{"model":"model-b"}}}')
 
     assert.deepEqual(await loadConfig(configPath), {
       agent: { explore: { model: "model-a" } },
+      permission: { "context7_*": "deny" },
       files: [ignoredPath],
     })
     const hooks = await PlanSpecPlugin({}, { configPath })
-    const runtime = { agent: { explore: { temperature: 0.2 } } }
+    const runtime = { agent: { explore: { temperature: 0.2 } }, permission: { read: "allow" } }
     hooks.config(runtime)
     assert.deepEqual(runtime, {
       agent: { explore: { model: "model-a", temperature: 0.2 } },
+      permission: { read: "allow", "context7_*": "deny" },
       files: [ignoredPath],
     })
   } finally {
@@ -54,4 +57,19 @@ test("plugin keeps running when the configured file is missing", async () => {
   const runtime = { agent: { explore: { model: "existing" } } }
   hooks.config(runtime)
   assert.deepEqual(runtime, { agent: { explore: { model: "existing" } } })
+})
+
+test("plugin expands plan-spec and psw prefixes only at the start of a message", async () => {
+  const hooks = await PlanSpecPlugin({}, { configPath: join(tmpdir(), "plan-spec-missing.jsonc") })
+  for (const input of ["plan-spec review this", "/plan-spec review this", "psw review this", "/psw review this"]) {
+    const output = { parts: [{ type: "text", text: input }] }
+    await hooks["chat.message"]({}, output)
+    assert.match(output.parts[0].text, /^review this\n\n---\n\n请使用 plan-spec 技能/)
+  }
+
+  for (const input of ["please psw review this", "pswreview this"]) {
+    const output = { parts: [{ type: "text", text: input }] }
+    await hooks["chat.message"]({}, output)
+    assert.equal(output.parts[0].text, input)
+  }
 })

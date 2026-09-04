@@ -7,7 +7,7 @@ async function secret(label: string, enabled: boolean, skip: boolean) {
   if (!enabled || skip) return undefined
   const value = await password({ message: `${label} (leave empty to configure later)` })
   if (isCancel(value)) throw new Error("Cancelled")
-  return value || undefined
+  return value.trim() || undefined
 }
 
 function common(command: Command) {

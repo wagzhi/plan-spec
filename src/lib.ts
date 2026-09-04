@@ -23,6 +23,7 @@ type Manifest = {
   configBefore: Record<string, unknown>
   managedModels: Record<string, string>
   managedMcps: Record<string, unknown>
+  managedPermissions?: Record<string, string>
   managedPlugin: unknown
   pluginBefore?: unknown
 }
@@ -31,14 +32,8 @@ const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..")
 const assets = join(packageRoot, "assets")
 const planSpecPlugin = "@wagzhi/plan-spec-plugin@^0.2.0"
 const manifestVersion = "0.2.0"
-const managedBlock = `<!-- plan-spec-package:begin -->
-## Plan-Spec Routing
-
-- Use the \`plan-spec\` skill only after an explicit \`plan-spec\` or \`/plan-spec\` request.
-- Delegate local Git write operations to \`@git-agent\` and Gitee operations to \`@gitee-agent\`.
-- Delegate third-party documentation to \`@doc-agent\`; use \`@ask-agent\` when it also needs project context.
-- Use \`@web-debug\` for browser debugging through Chrome DevTools.
-<!-- plan-spec-package:end -->`
+const managedBlockPath = join(assets, "templates", "plan-spec-routing.md")
+const managedBlockExpression = /<!-- plan-spec-package:begin -->[\s\S]*?<!-- plan-spec-package:end -->/
 
 const models: Record<string, string> = {
   "ask-agent": "opencode-go/deepseek-v4-flash",
@@ -71,6 +66,11 @@ const mcps = {
   },
 }
 
+const permissions = {
+  "context7_*": "deny",
+  "chrome_devtools_*": "deny",
+}
+
 function hash(value: Buffer | string) {
   return createHash("sha256").update(value).digest("hex")
 }
@@ -83,8 +83,12 @@ export function planSpecHome() {
   return resolve(process.env.PLAN_SPEC_HOME ?? join(homedir(), ".plan-spec"))
 }
 
+function defaultConfigDir() {
+  return resolve(join(homedir(), ".config", "opencode"))
+}
+
 export function resolveConfigDir(options: Options) {
-  return resolve(options.configDir ?? process.env.OPENCODE_CONFIG_DIR ?? join(homedir(), ".config", "opencode"))
+  return resolve(options.configDir ?? process.env.OPENCODE_CONFIG_DIR ?? defaultConfigDir())
 }
 
 function planSpecConfigPath(dir: string) {
@@ -94,8 +98,8 @@ function planSpecConfigPath(dir: string) {
 async function configPath(dir: string) {
   const jsonc = join(dir, "opencode.jsonc")
   const json = join(dir, "opencode.json")
-  if (await exists(jsonc) && await exists(json)) throw new Error(`Both ${jsonc} and ${json} exist; keep only one config format.`)
-  return (await exists(jsonc)) ? jsonc : (await exists(json)) ? json : jsonc
+  if (await exists(jsonc)) return jsonc
+  return (await exists(json)) ? json : jsonc
 }
 
 async function loadJsonc(path: string) {
@@ -124,12 +128,12 @@ async function backup(path: string) {
   await copyFile(path, target)
 }
 
-async function writeJsonc(path: string, changes: Array<{ path: (string | number)[]; value: unknown; isDeletion?: boolean }>) {
+async function writeJsonc(path: string, changes: Array<{ path: (string | number)[]; value: unknown; isDeletion?: boolean }>, createBackup = true) {
   const loaded = await loadJsonc(path)
   const next = updateJsonc(loaded.text, changes)
   if (next !== loaded.text) {
     await mkdir(dirname(path), { recursive: true })
-    await backup(path)
+    if (createBackup) await backup(path)
     await writeFile(path, next, "utf8")
   }
   return { before: loaded.data, after: parse(next) as Record<string, unknown> }
@@ -150,7 +154,6 @@ function same(value: unknown, expected: unknown) {
 
 async function copyManaged(source: string, target: string, files: Record<string, string>) {
   await mkdir(dirname(target), { recursive: true })
-  await backup(target)
   await cp(source, target, { recursive: true, force: true })
   if ((await stat(target)).isFile()) files[target] = hash(await readFile(target))
 }
@@ -170,11 +173,12 @@ async function copyTree(source: string, target: string, files: Record<string, st
 }
 
 async function writeSecret(name: string, value?: string) {
-  if (!value) return false
+  const normalized = value?.trim()
+  if (!normalized) return false
   const directory = join(planSpecHome(), "secrets")
   await mkdir(directory, { recursive: true, mode: 0o700 })
   const path = join(directory, name)
-  await writeFile(path, value.trim(), { encoding: "utf8", mode: 0o600 })
+  await writeFile(path, normalized, { encoding: "utf8", mode: 0o600 })
   if (platform() !== "win32") await (await import("node:fs/promises")).chmod(path, 0o600)
   else {
     const user = process.env.USERNAME
@@ -192,12 +196,9 @@ async function writeManagedAgents(dir: string, files: Record<string, string>) {
 async function writeRouting(dir: string, files: Record<string, string>) {
   const path = join(dir, "AGENTS.md")
   const current = (await exists(path)) ? await readFile(path, "utf8") : ""
-  const expression = /<!-- plan-spec-package:begin -->[\s\S]*?<!-- plan-spec-package:end -->/
-  const next = expression.test(current) ? current.replace(expression, managedBlock) : `${current.trimEnd()}${current.trim() ? "\n\n" : ""}${managedBlock}\n`
-  if (next !== current) {
-    await backup(path)
-    await writeFile(path, next, "utf8")
-  }
+  const managedBlock = (await readFile(managedBlockPath, "utf8")).trimEnd()
+  const next = managedBlockExpression.test(current) ? current.replace(managedBlockExpression, managedBlock) : `${current.trimEnd()}${current.trim() ? "\n\n" : ""}${managedBlock}\n`
+  if (next !== current) await writeFile(path, next, "utf8")
   files[path] = hash(await readFile(path))
 }
 
@@ -210,8 +211,8 @@ function isPlanSpecPlugin(item: unknown) {
   return /^@wagzhi\/plan-spec-plugin(?:@.+)?$/.test(pluginName(item) ?? "")
 }
 
-function pluginEntry(planSpecConfig: string) {
-  return [planSpecPlugin, { configPath: planSpecConfig }]
+function pluginEntry(dir: string, planSpecConfig: string) {
+  return dir === defaultConfigDir() ? planSpecPlugin : [planSpecPlugin, { configPath: planSpecConfig }]
 }
 
 function configuredModels(overrides: string[] = []) {
@@ -252,18 +253,20 @@ export async function install(options: Options, secrets: { gitee?: string; conte
   const planLoaded = await loadJsonc(planConfig)
   const files: Record<string, string> = {}
   const activeModels = configuredModels(options.model)
+  const activePermissions = { ...permissions }
   const disabled = new Set(options.disableMcp ?? [])
   for (const name of disabled) if (!(name in mcps)) throw new Error(`Unknown MCP: ${name}`)
   const activeMcps = Object.fromEntries(Object.entries(mcps).map(([name, value]) => [name, { ...value, enabled: !disabled.has(name) }]))
 
   const plugins = Array.isArray(globalLoaded.data.plugin) ? globalLoaded.data.plugin : []
   const oldPlugin = plugins.findIndex(isPlanSpecPlugin)
-  const managedPlugin = pluginEntry(planConfig)
+  const managedPlugin = pluginEntry(dir, planConfig)
   await writeJsonc(global, [{ path: ["plugin", oldPlugin >= 0 ? oldPlugin : plugins.length], value: managedPlugin }])
 
   const planChanges: Array<{ path: (string | number)[]; value: unknown }> = [
     ...Object.entries(activeModels).map(([name, model]) => ({ path: ["agent", name, "model"], value: model })),
     ...Object.entries(activeMcps).map(([name, value]) => ({ path: ["mcp", name], value })),
+    ...Object.entries(activePermissions).map(([name, value]) => ({ path: ["permission", name], value })),
   ]
   await writeJsonc(planConfig, planChanges)
   await copyTree(join(assets, "skills", "plan-spec"), join(dir, "skills", "plan-spec"), files)
@@ -283,6 +286,7 @@ export async function install(options: Options, secrets: { gitee?: string; conte
     configBefore: existingManifest?.configBefore ?? planLoaded.data,
     managedModels: activeModels,
     managedMcps: activeMcps,
+    managedPermissions: activePermissions,
     managedPlugin,
     pluginBefore: existingManifest?.pluginBefore ?? (oldPlugin >= 0 ? plugins[oldPlugin] : undefined),
   }
@@ -315,8 +319,10 @@ export async function doctor(options: Options) {
     checks.push({ name: "plan-spec config", ok: await exists(planConfig), detail: planConfig })
     const expectedModels = manifest?.managedModels ?? models
     const expectedMcps = manifest?.managedMcps ?? mcps
+    const expectedPermissions = manifest?.managedPermissions ?? permissions
     for (const [name, model] of Object.entries(expectedModels)) checks.push({ name: `${name} model`, ok: getAt(config.data, ["agent", name, "model"]) === model, detail: model })
     for (const [name, mcp] of Object.entries(expectedMcps)) checks.push({ name: `${name} MCP`, ok: same(getAt(config.data, ["mcp", name]), mcp), detail: "Managed MCP definition" })
+    for (const [name, permission] of Object.entries(expectedPermissions)) checks.push({ name: `${name} permission`, ok: getAt(config.data, ["permission", name]) === permission, detail: permission })
   }
   catch (error) { checks.push({ name: "plan-spec config", ok: false, detail: error instanceof Error ? error.message : String(error) }) }
   for (const secret of ["gitee-access-token", "context7-api-key"]) checks.push({ name: secret, ok: await exists(join(planSpecHome(), "secrets", secret)), detail: "Optional secret file" })
@@ -332,18 +338,21 @@ export async function uninstall(options: Options) {
 
   for (const [path, expected] of Object.entries(manifest.files)) {
     if (!(await exists(path))) continue
-    if (hash(await readFile(path)) !== expected) { addPreserved(preserved, path); continue }
     if (basename(path) === "AGENTS.md") {
       const text = await readFile(path, "utf8")
-      await writeFile(path, text.replace(/\n?<!-- plan-spec-package:begin -->[\s\S]*?<!-- plan-spec-package:end -->\n?/, ""))
-    } else await rm(path, { force: true })
+      const next = text.replace(new RegExp(`\\n?${managedBlockExpression.source}\\n?`), "")
+      if (next !== text) await writeFile(path, next, "utf8")
+      continue
+    }
+    if (hash(await readFile(path)) !== expected) { addPreserved(preserved, path); continue }
+    await rm(path, { force: true })
   }
 
   const global = await configPath(manifest.configDir)
   const globalLoaded = await loadJsonc(global)
   if (Array.isArray(globalLoaded.data.plugin)) {
-    const index = globalLoaded.data.plugin.findIndex((item) => same(item, manifest.managedPlugin))
-    if (index >= 0) await writeJsonc(global, [{ path: ["plugin", index], value: manifest.pluginBefore, isDeletion: manifest.pluginBefore === undefined }])
+    const index = globalLoaded.data.plugin.findIndex(isPlanSpecPlugin)
+    if (index >= 0) await writeJsonc(global, [{ path: ["plugin", index], value: manifest.pluginBefore, isDeletion: manifest.pluginBefore === undefined }], false)
   }
 
   const config = await loadJsonc(manifest.planSpecConfig)
@@ -358,7 +367,12 @@ export async function uninstall(options: Options) {
     const previous = getAt(manifest.configBefore, ["agent", name, "model"])
     configChanges.push({ path: ["agent", name, "model"], value: previous, isDeletion: previous === undefined })
   }
-  if (configChanges.length) await writeJsonc(manifest.planSpecConfig, configChanges)
+  for (const [name, expected] of Object.entries(manifest.managedPermissions ?? {})) {
+    if (getAt(config.data, ["permission", name]) !== expected) { addPreserved(preserved, manifest.planSpecConfig); continue }
+    const previous = getAt(manifest.configBefore, ["permission", name])
+    configChanges.push({ path: ["permission", name], value: previous, isDeletion: previous === undefined })
+  }
+  if (configChanges.length) await writeJsonc(manifest.planSpecConfig, configChanges, false)
   if (!manifest.planSpecConfigExisted && await exists(manifest.planSpecConfig)) {
     const after = await loadJsonc(manifest.planSpecConfig)
     if (isEmptyConfig(after.data)) await rm(manifest.planSpecConfig, { force: true })
@@ -368,4 +382,4 @@ export async function uninstall(options: Options) {
   return preserved
 }
 
-export { models, mcps, writeSecret }
+export { models, mcps, permissions, writeSecret }

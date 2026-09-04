@@ -2,7 +2,7 @@
 
 OpenCode plugin that provides two capabilities:
 
-1. Expands explicit `plan-spec` and `/plan-spec` requests into the plan-spec workflow instruction.
+1. Expands explicit `plan-spec`, `/plan-spec`, `psw`, and `/psw` requests into the plan-spec workflow instruction.
 2. Loads one `plan-spec.jsonc` file and deep-merges it into the OpenCode runtime config.
 
 The plan-spec installer registers the plugin with its managed config path:

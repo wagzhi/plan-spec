@@ -33,7 +33,7 @@ npx @wagzhi/plan-spec doctor
 npx @wagzhi/plan-spec uninstall
 ```
 
-Use `plan-spec <task>` or `/plan-spec <task>` in OpenCode to explicitly activate
+Use `plan-spec <task>`, `/plan-spec <task>`, `psw <task>`, or `/psw <task>` in OpenCode to explicitly activate
 the installed workflow. Per-project `spec/plan-spec.json` still controls whether
 the project has enabled the workflow.
 

@@ -9,7 +9,7 @@ npx @wagzhi/plan-spec doctor
 npx @wagzhi/plan-spec uninstall
 ```
 
-安装器只在用户显式输入 `plan-spec` 或 `/plan-spec` 时触发计划规范。项目是否启用仍由
+安装器只在用户显式输入 `plan-spec`、`/plan-spec`、`psw` 或 `/psw` 时触发计划规范。项目是否启用仍由
 `spec/plan-spec.json` 的 `enabled` 字段决定。
 
 显式触发插件以 `@wagzhi/plan-spec-plugin@^0.2.0` npm 包写入 OpenCode 主配置作为最小引导；五个

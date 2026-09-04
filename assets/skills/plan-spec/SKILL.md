@@ -1,6 +1,6 @@
 ---
 name: plan-spec
-description: "仅当用户显式输入 `plan-spec`，或 plan-spec 插件注入“请使用 plan-spec 技能”指令时使用本技能。显式调用后，只有项目 `spec/plan-spec.json` 的 `enabled` 为 `true` 才执行计划规范；配置缺失或项目未启用时，询问用户是否为该项目启用并沿用初始化流程。不得仅因配置存在或任务类别匹配而触发。"
+description: "仅当用户显式输入 `plan-spec`、`psw`，或 plan-spec 插件注入“请使用 plan-spec 技能”指令时使用本技能。显式调用后，只有项目 `spec/plan-spec.json` 的 `enabled` 为 `true` 才执行计划规范；配置缺失或项目未启用时，询问用户是否为该项目启用并沿用初始化流程。不得仅因配置存在或任务类别匹配而触发。"
 ---
 
 # 计划规范
@@ -9,7 +9,7 @@ description: "仅当用户显式输入 `plan-spec`，或 plan-spec 插件注入�
 
 ## 双重启用条件
 
-- **本次调用**：仅当用户以 `plan-spec` 或 `/plan-spec` 开头输入任务时，插件会注入本技能指令。
+- **本次调用**：仅当用户以 `plan-spec`、`/plan-spec`、`psw` 或 `/psw` 开头输入任务时，插件会注入本技能指令。
 - **项目配置**：本次调用已显式启用后，只有 `spec/plan-spec.json` 的 `enabled === true` 才执行计划规范。
 - 未显式触发时按当前会话其他指令处理；不得读取或依据配置自行启用。
 

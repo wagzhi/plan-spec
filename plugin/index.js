@@ -7,6 +7,7 @@ const PLAN_SPEC_INSTRUCTION =
   "请使用 plan-spec 技能处理当前任务，并按其规范拆分步骤后执行。"
 
 const DEFAULT_CONFIG_PATH = "~/.config/opencode/plan-spec.jsonc"
+const PLAN_SPEC_PREFIX = /^(?:\/)?(?:plan-spec|psw)\b/
 
 function debug(message) {
   if (process.env.PLAN_SPEC_CONFIG_DEBUG === "1" || process.env.PLAN_SPEC_CONFIG_DEBUG === "true") {
@@ -67,10 +68,10 @@ export async function PlanSpecPlugin(_input, options = {}) {
       if (!text) return
 
       const original = text.text ?? ""
-      if (!/^(?:\/)?plan-spec\b/.test(original)) return
+      if (!PLAN_SPEC_PREFIX.test(original)) return
       if (original.includes(PLAN_SPEC_INSTRUCTION)) return
 
-      const task = original.replace(/^(?:\/)?plan-spec\b/, "").trim()
+      const task = original.replace(PLAN_SPEC_PREFIX, "").trim()
       text.text = `${task || "请按 plan-spec 规范处理当前项目状态。"}\n\n---\n\n${PLAN_SPEC_INSTRUCTION}`
     },
   }
