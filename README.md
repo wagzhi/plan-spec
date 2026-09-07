@@ -16,11 +16,13 @@ plugin bootstrap, and writes the managed agent models and MCP definitions only t
 startup, so Bun must be available. It guides OpenCode Go authentication through
 `/connect`; it never writes OpenCode's auth store.
 
-Secrets are stored in `~/.plan-spec/secrets/` and referenced with OpenCode
-`{file:...}` variables. Run `npx @wagzhi/plan-spec config` to change MCP choices,
-secrets, or the five installed agent model mappings. `--config-dir` changes the
-OpenCode configuration root for custom deployments and tests; otherwise the managed
-file is `~/.config/opencode/plan-spec.jsonc`.
+Secrets are stored in `~/.plan-spec/secrets/` and referenced with `{file:...}`
+variables. Because `plan-spec.jsonc` is loaded by the plugin, the plugin resolves
+its managed Gitee and Context7 secret references at runtime. Set `PLAN_SPEC_HOME`
+to use a different secret root. Run `npx @wagzhi/plan-spec config` to change MCP
+choices, secrets, or the five installed agent model mappings. `--config-dir` changes
+the OpenCode configuration root for custom deployments and tests; otherwise the
+managed file is `~/.config/opencode/plan-spec.jsonc`.
 
 ```sh
 # Keep all managed files but disable the browser MCP and choose a different model.

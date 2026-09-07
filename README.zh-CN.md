@@ -16,8 +16,9 @@ npx @wagzhi/plan-spec uninstall
 agent 的模型配置和三项 MCP 配置统一写入 `~/.config/opencode/plan-spec.jsonc`。OpenCode 会在启动时
 用 Bun 安装 npm 插件，因此本机需可用 Bun；技能和 agent 仍复制至 OpenCode 全局配置目录。
 
-密钥保存于 `~/.plan-spec/secrets/` 并通过 OpenCode 的 `{file:...}` 引用；安装器不会写入
-OpenCode 的认证存储。OpenCode Go 请在安装后通过 `/connect` 登录。
+密钥保存于 `~/.plan-spec/secrets/` 并以 `{file:...}` 引用；由于 `plan-spec.jsonc` 由插件
+加载，插件会在运行时解析受管的 Gitee 与 Context7 密钥引用。设置 `PLAN_SPEC_HOME` 可使用
+其他密钥根目录。安装器不会写入 OpenCode 的认证存储。OpenCode Go 请在安装后通过 `/connect` 登录。
 
 `config` 支持 `--disable-mcp context7|gitee|chrome_devtools` 和
 `--model agent=provider/model`，仅更新 `plan-spec.jsonc` 的受管字段；不创建也不修改

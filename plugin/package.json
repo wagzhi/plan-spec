@@ -1,6 +1,6 @@
 {
   "name": "@wagzhi/plan-spec-plugin",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Explicit plan-spec trigger and single-file configuration plugin for OpenCode.",
   "license": "MIT",
   "type": "module",

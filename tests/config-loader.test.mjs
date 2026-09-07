@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
@@ -57,6 +57,81 @@ test("plugin keeps running when the configured file is missing", async () => {
   const runtime = { agent: { explore: { model: "existing" } } }
   hooks.config(runtime)
   assert.deepEqual(runtime, { agent: { explore: { model: "existing" } } })
+})
+
+test("plugin resolves managed secrets from PLAN_SPEC_HOME", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "plan-spec-secret-config-"))
+  const home = join(dir, "state")
+  const configPath = join(dir, "plan-spec.jsonc")
+  const originalHome = process.env.PLAN_SPEC_HOME
+  try {
+    await mkdir(join(home, "secrets"), { recursive: true })
+    await writeFile(join(home, "secrets", "gitee-access-token"), "gitee-token\n")
+    await writeFile(join(home, "secrets", "context7-api-key"), "context7-key\n")
+    await writeFile(configPath, `{
+      "mcp": {
+        "gitee": { "environment": { "GITEE_ACCESS_TOKEN": "{file:~/.plan-spec/secrets/gitee-access-token}" } },
+        "context7": { "headers": { "CONTEXT7_API_KEY": "{file:~/.plan-spec/secrets/context7-api-key}" } }
+      }
+    }`)
+    process.env.PLAN_SPEC_HOME = home
+
+    const hooks = await PlanSpecPlugin({}, { configPath })
+    const runtime = {}
+    hooks.config(runtime)
+    assert.equal(runtime.mcp.gitee.environment.GITEE_ACCESS_TOKEN, "gitee-token")
+    assert.equal(runtime.mcp.context7.headers.CONTEXT7_API_KEY, "context7-key")
+  } finally {
+    if (originalHome === undefined) delete process.env.PLAN_SPEC_HOME
+    else process.env.PLAN_SPEC_HOME = originalHome
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test("plugin does not resolve unrecognized file references", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "plan-spec-secret-config-"))
+  try {
+    const configPath = join(dir, "plan-spec.jsonc")
+    const reference = "{file:~/unmanaged-secret}"
+    await writeFile(configPath, `{
+      "mcp": { "gitee": { "environment": { "GITEE_ACCESS_TOKEN": "${reference}" } } }
+    }`)
+
+    const hooks = await PlanSpecPlugin({}, { configPath })
+    const runtime = {}
+    hooks.config(runtime)
+    assert.equal(runtime.mcp.gitee.environment.GITEE_ACCESS_TOKEN, reference)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test("plugin removes unavailable managed secret references", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "plan-spec-secret-config-"))
+  const originalHome = process.env.PLAN_SPEC_HOME
+  const originalError = console.error
+  try {
+    const configPath = join(dir, "plan-spec.jsonc")
+    await writeFile(configPath, `{
+      "mcp": {
+        "gitee": { "enabled": true, "environment": { "GITEE_ACCESS_TOKEN": "{file:~/.plan-spec/secrets/gitee-access-token}" } },
+        "context7": { "enabled": true, "headers": { "CONTEXT7_API_KEY": "{file:~/.plan-spec/secrets/context7-api-key}" } }
+      }
+    }`)
+    process.env.PLAN_SPEC_HOME = join(dir, "missing-state")
+    console.error = () => {}
+
+    const hooks = await PlanSpecPlugin({}, { configPath })
+    const runtime = {}
+    hooks.config(runtime)
+    assert.deepEqual(runtime.mcp.gitee, { enabled: true, environment: {} })
+    assert.deepEqual(runtime.mcp.context7, { enabled: true, headers: {} })
+  } finally {
+    console.error = originalError
+    if (originalHome === undefined) delete process.env.PLAN_SPEC_HOME
+    else process.env.PLAN_SPEC_HOME = originalHome
+    await rm(dir, { recursive: true, force: true })
+  }
 })
 
 test("plugin expands plan-spec and psw prefixes only at the start of a message", async () => {
