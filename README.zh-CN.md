@@ -2,8 +2,12 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-通过一条命令为 OpenCode 安装和管理计划先行的工作流。本包会安装 plan-spec 技能、显式触发插件、
-五个职责明确的子 agent，以及这些 agent 使用的 MCP 配置。
+通过一条命令为 OpenCode 安装和管理计划先行的工作流。工作流提供两种安装模式：
+
+- **lite（默认）**：只安装 `plan-spec` 技能和一份轻量的 `AGENTS.md` 路由区块，不安装子 agent、
+  不安装触发插件，也不写入 `plan-spec.jsonc`。
+- **standard**：在 lite 基础上额外安装显式触发插件、五个职责明确的子 agent，以及这些 agent
+  使用的 MCP 配置。
 
 本项目替代了 [`wagzhi/opencode-config`](https://github.com/wagzhi/opencode-config)
 通过配置仓库手工分发 OpenCode 配置的方式。现在无需再将配置仓库克隆到
@@ -22,16 +26,22 @@
 
 ## 快速开始
 
-1. 运行交互式安装程序：
+1. 运行安装程序，默认安装 **lite** 模式：
 
    ```sh
    npx @wagzhi/plan-spec install
    ```
 
-   安装器会提示输入 Gitee Access Token 和 Context7 API Key。两项都可以留空，稍后再配置。
+   需要完整能力时改为安装 standard 模式：
+
+   ```sh
+   npx @wagzhi/plan-spec install --mode standard
+   ```
+
+   standard 模式会提示输入 Gitee Access Token 和 Context7 API Key，两项都可以留空，稍后再配置。
 
 2. 启动 OpenCode，执行 `/connect` 并选择 **OpenCode Go**，然后重启 OpenCode，使其加载新安装的
-   插件和配置。
+   插件和配置。lite 模式没有插件，重启仍可确保技能和路由区块生效。
 
 3. 验证安装结果：
 
@@ -48,19 +58,35 @@
    psw 重构配置加载器
    ```
 
+## 安装模式
+
+| 模式 | 安装内容 | 触发方式 |
+| --- | --- | --- |
+| `lite`（默认） | `skills/plan-spec/` 和 lite 版 `AGENTS.md` 路由区块 | 依据路由区块识别显式的 `plan-spec` / `psw` 请求 |
+| `standard` | lite 全部内容，外加插件、五个子 agent、`plan-spec.jsonc`、MCP 和受管权限 | 插件把 `plan-spec`、`/plan-spec`、`psw`、`/psw` 改写为技能指令 |
+
+技能按能力降级，因此同一份 `SKILL.md` 在两种模式下都可用：存在 `@git-agent` / `@gitee-agent`
+时委托它们，否则由主 agent 直接执行（Gitee 降级为生成草稿、由用户手工同步）。
+
+模式只支持单向就地变更：
+
+- `lite` → `standard`：执行 `install --mode standard`。升级时会记录原有配置，便于之后 `uninstall` 恢复。
+- `standard` → `lite`：拒绝。先执行 `plan-spec uninstall`，再执行 `install --mode lite`。
+- 未传 `--mode` 时，`install` 和 `config` 保持当前模式；首次安装未传 `--mode` 则使用 lite。
+
 ## 安装内容
 
 | 资源 | 用途 |
 | --- | --- |
-| `skills/plan-spec/` | 项目计划、执行追踪和结果回填工作流 |
-| `@wagzhi/plan-spec-plugin@^0.2.0` | 加载 `plan-spec.jsonc` 并展开显式 plan-spec 请求 |
-| `@ask-agent` | 结合本地代码和第三方文档回答项目问题 |
-| `@doc-agent` | 查询第三方文档、SDK、API 和技术规范 |
-| `@git-agent` | 执行用户请求的本地 Git 操作 |
-| `@gitee-agent` | 处理 Gitee Issue、Pull Request、审查、合并和任务进度 |
-| `@web-debug` | 通过 Chrome DevTools 调试浏览器页面 |
+| `skills/plan-spec/` | 项目计划、执行追踪和结果回填工作流（两种模式） |
+| `@wagzhi/plan-spec-plugin@^0.2.0` | 仅 standard 模式。加载 `plan-spec.jsonc` 并展开显式 plan-spec 请求 |
+| `@ask-agent` | 仅 standard 模式。结合本地代码和第三方文档回答项目问题 |
+| `@doc-agent` | 仅 standard 模式。查询第三方文档、SDK、API 和技术规范 |
+| `@git-agent` | 仅 standard 模式。执行用户请求的本地 Git 操作 |
+| `@gitee-agent` | 仅 standard 模式。处理 Gitee Issue、Pull Request、审查、合并和任务进度 |
+| `@web-debug` | 仅 standard 模式。通过 Chrome DevTools 调试浏览器页面 |
 
-安装器还会管理以下 MCP：
+standard 模式还会管理以下 MCP：
 
 | MCP | 用途 |
 | --- | --- |
@@ -128,34 +154,43 @@ npx @wagzhi/plan-spec config --model ask-agent=opencode-go/deepseek-v4-pro doc-a
 | --- | --- |
 | `-y`、`--yes` | 不提示并使用默认选项；不会请求密钥 |
 | `--skip-secrets` | 不请求或更新密钥文件 |
+| `--mode <mode>` | 仅 `install`。选择 `lite`（默认）或 `standard`；可将 lite 就地升级为 standard |
 | `--config-dir <path>` | 使用自定义 OpenCode 全局配置目录 |
-| `--disable-mcp <names...>` | 禁用 `context7`、`gitee` 和/或 `chrome_devtools` |
-| `--model <agent=model...>` | 覆盖受管 agent 的模型 |
+| `--disable-mcp <names...>` | 仅 standard 模式。禁用 `context7`、`gitee` 和/或 `chrome_devtools` |
+| `--model <agent=model...>` | 仅 standard 模式。覆盖受管 agent 的模型 |
 
 未传入 `--config-dir` 时，也可以通过 `OPENCODE_CONFIG_DIR` 指定 OpenCode 配置目录。
 
 ## 受管文件
 
-默认情况下，安装器管理以下内容：
+lite 模式只管理：
+
+```text
+~/.config/opencode/
+├── AGENTS.md                   # lite 路由区块
+└── skills/plan-spec/           # plan-spec 技能
+
+~/.plan-spec/
+└── manifest.json               # 安装状态
+```
+
+standard 模式额外管理：
 
 ```text
 ~/.config/opencode/
 ├── opencode.jsonc              # 仅注册插件
 ├── plan-spec.jsonc             # 受管 agent、MCP 和权限
-├── AGENTS.md                   # 受管路由区块
-├── agents/                     # 五个受管子 agent
-└── skills/plan-spec/           # plan-spec 技能
+└── agents/                     # 五个受管子 agent
 
 ~/.plan-spec/
-├── manifest.json               # 安装状态
 └── secrets/
     ├── gitee-access-token
     └── context7-api-key
 ```
 
-密钥通过 `{file:...}` 变量引用，不会直接写入 OpenCode 配置。设置 `PLAN_SPEC_HOME` 可以改变安装
-状态和密钥的根目录。安装器不会写入 OpenCode 的认证存储，也不会创建或修改
-`opencode-personal.jsonc`。
+standard 模式下密钥通过 `{file:...}` 变量引用，不会直接写入 OpenCode 配置。设置
+`PLAN_SPEC_HOME` 可以改变安装状态和密钥的根目录。安装器不会写入 OpenCode 的认证存储，也不会
+创建或修改 `opencode-personal.jsonc`。
 
 现有的无关 OpenCode 配置和插件会被保留。本包管理的路径和字段可能在再次运行 `install` 或
 `config` 时被替换。
@@ -174,9 +209,9 @@ npx @wagzhi/plan-spec doctor
 npx @wagzhi/plan-spec doctor --json
 ```
 
-`doctor` 会检查 OpenCode 可执行文件、已安装的技能和 agent、插件注册、受管模型、MCP 定义、
-权限和可选密钥文件。如果 OpenCode 没有加载新资源，请完成 `/connect`、重启 OpenCode，然后再次
-运行 `doctor`。
+`doctor` 在两种模式下都会检查 OpenCode 可执行文件和已安装技能；lite 模式额外检查 `AGENTS.md`
+路由区块，standard 模式额外检查受管 agent、插件注册、受管模型、MCP 定义、权限和可选密钥文件。
+如果 OpenCode 没有加载新资源，请完成 `/connect`、重启 OpenCode，然后再次运行 `doctor`。
 
 ## 从 `opencode-config` 迁移
 

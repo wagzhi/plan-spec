@@ -32,7 +32,7 @@ description: "仅当用户显式输入 `plan-spec`、`psw`，或 plan-spec 插�
 
 1. 记录当前分支、HEAD 与工作区状态，作为本次修改基线。
 2. 存在未提交或未跟踪文件时列出并询问是否继续；不得撤销或自动提交任务前修改。
-3. Build Mode 下，干净工作区位于 `dev`、`main`、`master`、`release/*` 或 `release-*` 时，通过 `@git-agent` 创建 `feat/<brief_name>` 分支。Plan Mode 只说明分支方案。
+3. Build Mode 下，干净工作区位于 `dev`、`main`、`master`、`release/*` 或 `release-*` 时，通过 `@git-agent` 创建 `feat/<brief_name>` 分支；子代理不可用时由主 agent 直接创建。Plan Mode 只说明分支方案。
 4. 基线分支优先用 `git remote show <remote>` 获取；当前已在任务分支时先确认是否基于该分支继续。
 
 ## 需求拆解与执行
@@ -40,16 +40,17 @@ description: "仅当用户显式输入 `plan-spec`、`psw`，或 plan-spec 插�
 - Gitee “需求”类型 issue 必须先拆分为可独立验证的任务，用户明确指定任务 issue 后才实现。
 - Build Mode 将计划写到 `spec/feats/NNN-brief-YYYYMMDD.md`；Plan Mode 只生成草案。
 - 计划至少包含变更点、测试计划、假设与风险；完成后补充结果总结、文件清单、测试结果和后续跟进。
-- 项目管理已启用时，所有 Gitee 操作通过 `@gitee-agent`。
+- 项目管理已启用时，Gitee 操作优先通过 `@gitee-agent`；Gitee 工具不可用时只生成 issue 与评论草稿，交由用户手工同步，不得声称已同步。
 
 ## 任务收尾
 
 1. 对照任务基线与最终 Git 状态，准确汇总本次新增、修改、删除或重命名文件。
 2. 回填计划文件和最终答复；无法执行测试时如实记录原因。
-3. 仅当开始时工作区干净、当前为本任务分支、待提交内容全属本任务且测试通过时，通过 `@git-agent` 自动提交任务文件。
+3. 仅当开始时工作区干净、当前为本任务分支、待提交内容全属本任务且测试通过时，通过 `@git-agent` 自动提交任务文件；子代理不可用时由主 agent 直接提交，仍只暂存本任务文件。
 4. 其他情况列出文件、分支和测试结果并询问是否提交。不得自动推送、创建 PR 或混入任务前修改。
 
 ## Git 操作
 
-- Build Mode 的 Git 写操作委托 `@git-agent`；Plan Mode 只允许只读 Git 检查。
-- 本地 Git 和 Gitee 同时涉及时，先完成本地 Git 操作，再调用 `@gitee-agent`。
+- Build Mode 的 Git 写操作优先委托 `@git-agent`；当该子代理不可用时（例如 lite 模式未安装子代理），由主 agent 直接执行等价的 Git 命令，并遵守相同的安全约束。
+- Plan Mode 只允许只读 Git 检查，任何模式下都不得在 Plan Mode 执行写操作。
+- 本地 Git 和 Gitee 同时涉及时，先完成本地 Git 操作，再同步 Gitee。

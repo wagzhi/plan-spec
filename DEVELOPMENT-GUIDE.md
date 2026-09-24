@@ -18,6 +18,9 @@ CLI 有两个独立的状态目标，`--config-dir` 只能隔离其中一个：
 
 ## OpenCode 配置与插件规则
 
+以下插件与 `plan-spec.jsonc` 规则仅适用于 **standard** 模式；lite 模式不写 `opencode.jsonc`、
+`plan-spec.jsonc` 和 agents 目录。
+
 安装、升级和卸载都会先检查目标目录的 OpenCode 配置文件：
 
 1. 同时存在 `opencode.jsonc` 与 `opencode.json` 时，始终读写 `opencode.jsonc`。
@@ -49,6 +52,15 @@ CLI 有两个独立的状态目标，`--config-dir` 只能隔离其中一个：
 
 `assets/templates/plan-spec-routing.md` 是受管 `AGENTS.md` 区块的唯一来源，包含 plan-spec 触发规则和五个 subagent 的职责说明。安装或升级仅替换该文件中 `plan-spec-package` 标记包围的区块；卸载只移除该区块，保留区块外的用户内容且不创建备份。
 
+## 安装模式
+
+`install` 默认安装 **lite** 模式（仅技能 + 轻量 `AGENTS.md` 路由区块），不写插件、子 agent 和
+`plan-spec.jsonc`。需要验证插件、子 agent、MCP 或权限时，显式传 `--mode standard`。
+
+- `lite` → `standard`：`install --mode standard` 可就地升级，并记录原配置供卸载恢复。
+- `standard` → `lite`：拒绝，需先 `uninstall` 再 `install --mode lite`。
+- 未传 `--mode` 时保持当前模式；首次安装未传则为 lite。
+
 ## CLI 冒烟测试（隔离目录）
 
 同时隔离配置目录与安装状态目录，任何情况都不会污染真实 `~/.config/opencode` 或 `~/.plan-spec`：
@@ -56,9 +68,17 @@ CLI 有两个独立的状态目标，`--config-dir` 只能隔离其中一个：
 ```powershell
 $env:PLAN_SPEC_HOME = "$PWD\temp\test-plan-spec-home"
 
-# install：--yes --skip-secrets 避免交互式输入 Gitee / Context7 密钥
+# install（standard）：--yes --skip-secrets 避免交互式输入 Gitee / Context7 密钥
 node dist/cli.js install `
+  --mode standard `
   --config-dir "$PWD\temp\test-opencode" `
+  --yes `
+  --skip-secrets
+
+# 也可只验证 lite：--mode lite 或省略 --mode
+node dist/cli.js install `
+  --mode lite `
+  --config-dir "$PWD\temp\test-opencode-lite" `
   --yes `
   --skip-secrets
 

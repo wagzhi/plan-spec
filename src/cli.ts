@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { intro, outro, password, isCancel, log } from "@clack/prompts"
 import { Command } from "commander"
-import { doctor, install, Options, uninstall } from "./lib.js"
+import { currentInstallMode, doctor, install, Options, uninstall } from "./lib.js"
 
 async function secret(label: string, enabled: boolean, skip: boolean) {
   if (!enabled || skip) return undefined
@@ -18,22 +18,24 @@ function common(command: Command) {
     .option("--model <agent=model...>", "override a managed agent model")
 }
 
-const program = new Command().name("plan-spec").description("Install and manage plan-spec for OpenCode").version("0.2.0")
+const program = new Command().name("plan-spec").description("Install and manage plan-spec for OpenCode").version("0.3.0")
 
-common(program.command("install").description("Install all managed OpenCode resources")).action(async (options: Options) => {
+common(program.command("install").description("Install all managed OpenCode resources").option("--mode <mode>", "install mode: lite or standard (default: lite)")).action(async (options: Options) => {
   intro("plan-spec install")
+  const standard = (await currentInstallMode(options.mode)) === "standard"
   const result = await install(options, {
-    gitee: await secret("Gitee access token", true, Boolean(options.skipSecrets || options.yes)),
-    context7: await secret("Context7 API key", true, Boolean(options.skipSecrets || options.yes)),
+    gitee: await secret("Gitee access token", standard, Boolean(options.skipSecrets || options.yes)),
+    context7: await secret("Context7 API key", standard, Boolean(options.skipSecrets || options.yes)),
   })
   outro(`Installed into ${result.dir}. Run /connect and choose OpenCode Go, then restart OpenCode.`)
 })
 
 common(program.command("config").description("Reapply managed configuration and optionally update secrets")).action(async (options: Options) => {
   intro("plan-spec config")
+  const standard = (await currentInstallMode()) === "standard"
   const result = await install(options, {
-    gitee: await secret("New Gitee access token", true, Boolean(options.skipSecrets || options.yes)),
-    context7: await secret("New Context7 API key", true, Boolean(options.skipSecrets || options.yes)),
+    gitee: await secret("New Gitee access token", standard, Boolean(options.skipSecrets || options.yes)),
+    context7: await secret("New Context7 API key", standard, Boolean(options.skipSecrets || options.yes)),
   })
   outro(`Configuration updated: ${result.planSpecConfig}`)
 })

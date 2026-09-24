@@ -3,8 +3,13 @@
 [English](README.md) | [简体中文](README.zh-CN.md)
 
 Install and manage a plan-first workflow for OpenCode with one command. The
-package installs the plan-spec skill, its explicit-trigger plugin, five focused
-subagents, and the MCP configuration used by those agents.
+workflow has two install modes:
+
+- **lite** (default): installs only the `plan-spec` skill and a lightweight
+  `AGENTS.md` routing block. No managed subagents, no trigger plugin, and no
+  `plan-spec.jsonc` are written.
+- **standard**: additionally installs the explicit-trigger plugin, five focused
+  subagents, and the MCP configuration used by those agents.
 
 This project replaces the manual configuration-distribution workflow from
 [`wagzhi/opencode-config`](https://github.com/wagzhi/opencode-config). You no
@@ -25,17 +30,24 @@ The default agent models use OpenCode Go. Authenticate after installation with
 
 ## Quick Start
 
-1. Run the interactive installer:
+1. Run the installer. It installs **lite** mode by default:
 
    ```sh
    npx @wagzhi/plan-spec install
    ```
 
-   The installer prompts for a Gitee access token and Context7 API key. Either
+   For the full workflow, install standard mode instead:
+
+   ```sh
+   npx @wagzhi/plan-spec install --mode standard
+   ```
+
+   Standard mode prompts for a Gitee access token and Context7 API key. Either
    value can be left empty and configured later.
 
 2. Start OpenCode, run `/connect`, select **OpenCode Go**, and then restart
-   OpenCode so it can load the installed plugin and configuration.
+   OpenCode so it can load the installed plugin and configuration. Lite mode has
+   no plugin, but restarting keeps the skill and routing block consistent.
 
 3. Verify the installation:
 
@@ -52,19 +64,40 @@ The default agent models use OpenCode Go. Authenticate after installation with
    psw refactor the configuration loader
    ```
 
+## Install Modes
+
+| Mode | Installs | Trigger |
+| --- | --- | --- |
+| `lite` (default) | `skills/plan-spec/` and the lite `AGENTS.md` routing block | Explicit `plan-spec` / `psw` request interpreted from the routing block |
+| `standard` | Everything in lite plus the plugin, five subagents, `plan-spec.jsonc`, MCPs, and managed permissions | The plugin rewrites `plan-spec`, `/plan-spec`, `psw`, and `/psw` into a skill instruction |
+
+The shared skill degrades by capability, so the same `SKILL.md` works in both
+modes: Git operations and Gitee sync are delegated to `@git-agent` /
+`@gitee-agent` when those subagents exist, and otherwise executed directly by the
+main agent (Gitee falls back to drafts for manual sync).
+
+Mode changes are one-way in place:
+
+- `lite` → `standard`: run `install --mode standard`. Existing configuration is
+  recorded so a later `uninstall` restores it.
+- `standard` → `lite`: refused. Run `plan-spec uninstall` first, then
+  `install --mode lite`.
+- Re-running `install` or `config` without `--mode` keeps the current mode. A
+  first install without `--mode` uses lite.
+
 ## What Gets Installed
 
 | Resource | Purpose |
 | --- | --- |
-| `skills/plan-spec/` | Project planning, execution tracking, and result backfilling workflow |
-| `@wagzhi/plan-spec-plugin@^0.2.0` | Loads `plan-spec.jsonc` and expands explicit plan-spec requests |
-| `@ask-agent` | Project-aware answers using local code and third-party documentation |
-| `@doc-agent` | Third-party documentation, SDK, API, and specification lookup |
-| `@git-agent` | Requested local Git operations |
-| `@gitee-agent` | Gitee issues, pull requests, reviews, merges, and task progress |
-| `@web-debug` | Browser debugging through Chrome DevTools |
+| `skills/plan-spec/` | Project planning, execution tracking, and result backfilling workflow (both modes) |
+| `@wagzhi/plan-spec-plugin@^0.2.0` | Standard mode only. Loads `plan-spec.jsonc` and expands explicit plan-spec requests |
+| `@ask-agent` | Standard mode only. Project-aware answers using local code and third-party documentation |
+| `@doc-agent` | Standard mode only. Third-party documentation, SDK, API, and specification lookup |
+| `@git-agent` | Standard mode only. Requested local Git operations |
+| `@gitee-agent` | Standard mode only. Gitee issues, pull requests, reviews, merges, and task progress |
+| `@web-debug` | Standard mode only. Browser debugging through Chrome DevTools |
 
-The installer also manages these MCP definitions:
+Standard mode also manages these MCP definitions:
 
 | MCP | Used for |
 | --- | --- |
@@ -137,36 +170,45 @@ Additional installer options:
 | --- | --- |
 | `-y`, `--yes` | Use default choices without prompts; secrets are not requested |
 | `--skip-secrets` | Do not request or update secret files |
+| `--mode <mode>` | `install` only. Select `lite` (default) or `standard`; upgrades lite to standard in place |
 | `--config-dir <path>` | Use a custom OpenCode global configuration directory |
-| `--disable-mcp <names...>` | Disable `context7`, `gitee`, and/or `chrome_devtools` |
-| `--model <agent=model...>` | Override a managed agent model |
+| `--disable-mcp <names...>` | Standard mode only. Disable `context7`, `gitee`, and/or `chrome_devtools` |
+| `--model <agent=model...>` | Standard mode only. Override a managed agent model |
 
 `OPENCODE_CONFIG_DIR` can also select the OpenCode configuration directory when
 `--config-dir` is not provided.
 
 ## Managed Files
 
-By default, the installer manages:
+Lite mode manages only:
+
+```text
+~/.config/opencode/
+├── AGENTS.md                   # lite routing block
+└── skills/plan-spec/           # plan-spec skill
+
+~/.plan-spec/
+└── manifest.json               # installation state
+```
+
+Standard mode additionally manages:
 
 ```text
 ~/.config/opencode/
 ├── opencode.jsonc              # plugin registration only
 ├── plan-spec.jsonc             # managed agents, MCPs, and permissions
-├── AGENTS.md                   # managed routing block
-├── agents/                     # five managed subagents
-└── skills/plan-spec/           # plan-spec skill
+└── agents/                     # five managed subagents
 
 ~/.plan-spec/
-├── manifest.json               # installation state
 └── secrets/
     ├── gitee-access-token
     └── context7-api-key
 ```
 
-Secrets are referenced with `{file:...}` variables instead of being embedded in
-OpenCode configuration. Set `PLAN_SPEC_HOME` to move the installation state and
-secret root. The installer never writes OpenCode's authentication store and does
-not create or modify `opencode-personal.jsonc`.
+In standard mode, secrets are referenced with `{file:...}` variables instead of
+being embedded in OpenCode configuration. Set `PLAN_SPEC_HOME` to move the
+installation state and secret root. The installer never writes OpenCode's
+authentication store and does not create or modify `opencode-personal.jsonc`.
 
 Existing unrelated OpenCode configuration and plugins are retained. Paths and
 fields managed by this package may be replaced when `install` or `config` is run.
@@ -185,10 +227,11 @@ For structured output:
 npx @wagzhi/plan-spec doctor --json
 ```
 
-The doctor checks the OpenCode executable, installed skill and agents, plugin
-registration, managed models, MCP definitions, permissions, and optional secret
-files. If OpenCode does not load the new resources, complete `/connect`, restart
-OpenCode, and run the doctor again.
+The doctor checks the OpenCode executable and installed skill in both modes. In
+lite mode it also checks the `AGENTS.md` routing block; in standard mode it also
+checks the managed agents, plugin registration, managed models, MCP definitions,
+permissions, and optional secret files. If OpenCode does not load the new
+resources, complete `/connect`, restart OpenCode, and run the doctor again.
 
 ## Migrating From `opencode-config`
 

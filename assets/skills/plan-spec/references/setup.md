@@ -23,7 +23,7 @@
 
 ## Gitee 配置
 
-选择 Gitee 后，让用户提供仓库网页 URL 与项目页面 URL。仓库解析为 `<owner>/<repo>` 并用只读调用验证访问。项目 URL 仅接受 `/programs/<数字ID>` 或企业版 `/projects/<数字ID>` 的内部数字 ID；不得使用 `P1018` 等展示编号。
+选择 Gitee 后，让用户提供仓库网页 URL 与项目页面 URL。仓库解析为 `<owner>/<repo>`；Gitee 工具可用时用只读调用验证访问，工具不可用（例如 lite 模式未配置 Gitee MCP）时允许先保存仓库信息，但必须说明本次仅生成 issue 与评论草稿、需用户手工同步。项目 URL 仅接受 `/programs/<数字ID>` 或企业版 `/projects/<数字ID>` 的内部数字 ID；不得使用 `P1018` 等展示编号。
 
 写入：
 
