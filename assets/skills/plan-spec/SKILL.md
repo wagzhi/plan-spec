@@ -1,24 +1,24 @@
 ---
 name: plan-spec
-description: "仅当用户显式输入 `plan-spec`、`psw`，或 plan-spec 插件注入“请使用 plan-spec 技能”指令时使用本技能。显式调用后，只有项目 `spec/plan-spec.json` 的 `enabled` 为 `true` 才执行计划规范；配置缺失或项目未启用时，询问用户是否为该项目启用并沿用初始化流程。不得仅因配置存在或任务类别匹配而触发。"
+description: "用于规范项目中的任务规划与计划执行。仅在用户明确要求使用本技能时，按规范安排或执行计划。"
 ---
 
 # 计划规范
 
 标准化项目内的计划管理，确保计划先落盘、执行可追溯、结果可回填，并按项目配置关联需求与任务。
 
-## 双重启用条件
+## 调用与项目启用
 
-- **本次调用**：仅当用户以 `plan-spec`、`/plan-spec`、`psw` 或 `/psw` 开头输入任务时，插件会注入本技能指令。
-- **项目配置**：本次调用已显式启用后，只有 `spec/plan-spec.json` 的 `enabled === true` 才执行计划规范。
-- 未显式触发时按当前会话其他指令处理；不得读取或依据配置自行启用。
+- **本次调用**：仅当用户明确要求使用本技能时，才进入以下项目配置检查。普通任务规划或实现请求不构成调用。
+- **项目配置**：本次调用后，只有 `spec/plan-spec.json` 的 `enabled === true` 才按规范执行计划；配置缺失或未启用时按下文处理。
+- 未被明确调用时按当前会话其他指令处理；不得仅因任务类别匹配或项目配置存在而自行启用。
 
 ## Mode 边界
 
 - **Plan Mode**：只做只读检查和计划草案，不写文件、不创建分支、不提交、不更新 Gitee。
 - **Build Mode**：按本规范落盘计划、修改代码、创建分支和同步 Gitee。
 
-## 显式调用后的项目配置检查
+## 技能调用后的项目配置预检查
 
 定位项目根目录：Git 仓库使用仓库根目录，否则使用当前工作目录。读取 `<项目根目录>/spec/plan-spec.json`；该文件只决定项目是否启用，不是触发条件。
 
@@ -28,12 +28,16 @@ description: "仅当用户显式输入 `plan-spec`、`psw`，或 plan-spec 插�
 4. `projectManager.enabled=false` 是有效配置，不得再次询问项目管理系统。
 5. 项目管理启用时，只接受 `type="gitee"`、非空 `repository` 和十进制字符串 `programId`；处理 Gitee 需求前读取 [references/gitee-project-management.md](references/gitee-project-management.md)。
 
+## 计划阶段
+
+1、检查当前分支，要求是dev分支或master或者main分支，且分支干净。 否则询问用户是在当前分支上继续还是先处理git状态。
+2、计划清晰明确，必须包含本次要修改的文件清单、包括文件名、本次修改的内容描述。
+
 ## 执行前检查
 
 1. 记录当前分支、HEAD 与工作区状态，作为本次修改基线。
 2. 存在未提交或未跟踪文件时列出并询问是否继续；不得撤销或自动提交任务前修改。
-3. Build Mode 下，干净工作区位于 `dev`、`main`、`master`、`release/*` 或 `release-*` 时，通过 `@git-agent` 创建 `feat/<brief_name>` 分支；子代理不可用时由主 agent 直接创建。Plan Mode 只说明分支方案。
-4. 基线分支优先用 `git remote show <remote>` 获取；当前已在任务分支时先确认是否基于该分支继续。
+3. Build Mode 下，干净工作区位于 `dev`、`main`、`master`时，创建 `feat/<brief_name>` 分支。
 
 ## 需求拆解与执行
 

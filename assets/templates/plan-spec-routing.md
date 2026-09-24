@@ -1,7 +1,7 @@
 <!-- plan-spec-package:begin -->
 ## Plan-Spec Routing
 
-- Use the `plan-spec` skill only after an explicit `plan-spec`, `/plan-spec`, `psw`, or `/psw` request.
+- Use the `plan-spec` skill only when the user explicitly asks to use it. Do not activate it for ordinary planning or implementation requests, or merely because project configuration exists.
 - Delegate local Git write operations to `@git-agent` and Gitee operations to `@gitee-agent`.
 - Delegate third-party documentation to `@doc-agent`; use `@ask-agent` when it also needs project context.
 - Use `@web-debug` for browser debugging through Chrome DevTools.

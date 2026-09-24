@@ -1,6 +1,6 @@
 # Plan-spec 项目配置
 
-仅在用户通过 `plan-spec` 显式启用本次调用后，且项目配置不存在、无法解析或字段不完整时读取本文档。配置文件位于项目根目录的 `spec/plan-spec.json`；本文件不决定技能是否触发。
+仅在用户明确要求使用本技能后，且项目配置不存在、无法解析或字段不完整时读取本文档。配置文件位于项目根目录的 `spec/plan-spec.json`；本文件不决定技能是否触发。
 
 ## Mode 边界
 
@@ -47,7 +47,7 @@
 <!-- plan-spec:begin -->
 ## Plan-Spec
 
-本项目已启用 plan-spec。仅在用户显式输入 plan-spec 后，按计划规范完成执行前检查并落盘 `spec/feats` 计划，再修改实现文件。
+本项目已启用 plan-spec。仅在用户明确要求使用本技能后，按计划规范完成执行前检查并落盘 `spec/feats` 计划，再修改实现文件。
 Plan Mode 只生成草案，文件、Git 和 Gitee 写操作延后到 Build Mode。
 <!-- plan-spec:end -->
 ```

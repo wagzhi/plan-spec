@@ -34,7 +34,16 @@ test("install uses plan-spec.jsonc and leaves personal config untouched", async 
   assert.match(planConfig, /"gitee"/)
   assert.match(planConfig, /opencode-go\/deepseek-v4-flash/)
   assert.equal(await readFile(personal, "utf8"), personalContent)
-  assert.match(await readFile(join(config, "skills", "plan-spec", "SKILL.md"), "utf8"), /双重启用条件/)
+  const skill = await readFile(join(config, "skills", "plan-spec", "SKILL.md"), "utf8")
+  assert.match(skill, /## 调用与项目启用/)
+  assert.match(skill, /## 技能调用后的项目配置预检查/)
+  const description = skill.match(/^description: "([^"]+)"$/m)?.[1]
+  assert.ok(description)
+  assert.match(description, /任务规划与计划执行/)
+  assert.doesNotMatch(description, /psw|插件|plan-spec\.json/)
+  const routing = await readFile(join(config, "AGENTS.md"), "utf8")
+  assert.match(routing, /only when the user explicitly asks to use it/)
+  assert.doesNotMatch(routing, /psw|\/plan-spec/)
 
   const doctor = JSON.parse(run(["doctor", "--json", "--config-dir", config], env))
   assert.equal(doctor.find((check) => check.name === "config").ok, true)
@@ -263,6 +272,8 @@ test("lite install omits agents, plugin and plan-spec.jsonc", async () => {
 
     const routing = await readFile(join(config, "AGENTS.md"), "utf8")
     assert.match(routing, /plan-spec \*\*lite\*\* mode/)
+    assert.match(routing, /only when the user explicitly asks to use it/)
+    assert.doesNotMatch(routing, /psw|\/plan-spec/)
     assert.doesNotMatch(routing, /Managed Subagents/)
 
     const manifest = JSON.parse(await readFile(join(home, "manifest.json"), "utf8"))
