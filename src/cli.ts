@@ -18,7 +18,7 @@ function common(command: Command) {
     .option("--model <agent=model...>", "override a managed agent model")
 }
 
-const program = new Command().name("plan-spec").description("Install and manage plan-spec for OpenCode").version("0.3.0")
+const program = new Command().name("plan-spec").description("Install and manage plan-spec for OpenCode").version("0.4.0")
 
 common(program.command("install").description("Install all managed OpenCode resources").option("--mode <mode>", "install mode: lite or standard (default: lite)")).action(async (options: Options) => {
   intro("plan-spec install")

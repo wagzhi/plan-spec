@@ -17,7 +17,7 @@ test("install uses plan-spec.jsonc and leaves personal config untouched", async 
   await (await import("node:fs/promises")).mkdir(config, { recursive: true })
   await writeFile(join(config, "opencode.jsonc"), `{
   // preserve this comment
-  "plugin": ["example-plugin"],
+  "plugins": ["example-plugin"],
   "mcp": { "custom": { "enabled": true } }
 }\n`)
   const personalContent = '{"provider":{"existing":{"name":"keep"}},"agent":{"other":{"model":"keep/me"}}}\n'
@@ -29,7 +29,7 @@ test("install uses plan-spec.jsonc and leaves personal config untouched", async 
   const planConfig = await readFile(join(config, "plan-spec.jsonc"), "utf8")
   assert.match(global, /preserve this comment/)
   assert.match(global, /"custom"/)
-  assert.match(global, /@wagzhi\/plan-spec-plugin@\^0\.2\.0/)
+  assert.match(global, /@wagzhi\/plan-spec-plugin@\^0\.3\.0/)
   assert.doesNotMatch(global, /"gitee"/)
   assert.match(planConfig, /"gitee"/)
   assert.match(planConfig, /opencode-go\/deepseek-v4-flash/)
@@ -61,7 +61,7 @@ test("config updates the single managed config without duplicating the plugin", 
     const planConfig = await readFile(join(config, "plan-spec.jsonc"), "utf8")
     assert.equal((global.match(/@wagzhi\/plan-spec-plugin/g) ?? []).length, 1)
     assert.match(planConfig, /provider\/model/)
-    assert.match(planConfig, /"chrome_devtools"[\s\S]*?"enabled": false/)
+    assert.match(planConfig, /"chrome_devtools"[\s\S]*?"disabled": true/)
   } finally {
     await rm(root, { recursive: true, force: true })
   }
@@ -75,7 +75,7 @@ test("default config directory uses the plugin default path", async () => {
   try {
     run(["install", "--mode", "standard", "--yes", "--skip-secrets"], env)
     const global = JSON.parse(await readFile(join(config, "opencode.jsonc"), "utf8"))
-    assert.deepEqual(global.plugin, ["@wagzhi/plan-spec-plugin@^0.2.0"])
+    assert.deepEqual(global.plugins, ["@wagzhi/plan-spec-plugin@^0.3.0"])
 
     run(["uninstall"], env)
     assert.doesNotMatch(await readFile(join(config, "opencode.jsonc"), "utf8"), /@wagzhi\/plan-spec-plugin/)
@@ -90,25 +90,25 @@ test("prefers opencode.jsonc and only replaces the plan-spec plugin", async () =
   const home = join(root, "home")
   const json = join(config, "opencode.json")
   const jsonc = join(config, "opencode.jsonc")
-  const originalJson = '{"plugin":["json-plugin"]}\n'
+  const originalJson = '{"plugins":["json-plugin"]}\n'
   const previousPlugin = ["@wagzhi/plan-spec-plugin@^0.1.0", { configPath: "old-plan-spec.jsonc" }]
   await (await import("node:fs/promises")).mkdir(config, { recursive: true })
   await writeFile(json, originalJson)
-  await writeFile(jsonc, `${JSON.stringify({ plugin: ["keep-plugin", previousPlugin, "other-plugin"] }, null, 2)}\n`)
+  await writeFile(jsonc, `${JSON.stringify({ plugins: ["keep-plugin", previousPlugin, "other-plugin"] }, null, 2)}\n`)
   try {
     run(["install", "--mode", "standard", "--yes", "--skip-secrets", "--config-dir", config], { PLAN_SPEC_HOME: home })
     assert.equal(await readFile(json, "utf8"), originalJson)
 
     const installed = JSON.parse(await readFile(jsonc, "utf8"))
-    assert.deepEqual(installed.plugin, [
+    assert.deepEqual(installed.plugins, [
       "keep-plugin",
-      ["@wagzhi/plan-spec-plugin@^0.2.0", { configPath: join(config, "plan-spec.jsonc") }],
+      { package: "@wagzhi/plan-spec-plugin@^0.3.0", options: { configPath: join(config, "plan-spec.jsonc") } },
       "other-plugin",
     ])
 
     run(["uninstall", "--config-dir", config], { PLAN_SPEC_HOME: home })
     assert.equal(await readFile(json, "utf8"), originalJson)
-    assert.deepEqual(JSON.parse(await readFile(jsonc, "utf8")).plugin, ["keep-plugin", previousPlugin, "other-plugin"])
+    assert.deepEqual(JSON.parse(await readFile(jsonc, "utf8")).plugins, ["keep-plugin", previousPlugin, "other-plugin"])
   } finally {
     await rm(root, { recursive: true, force: true })
   }
@@ -120,18 +120,18 @@ test("uninstall removes a changed plan-spec plugin entry without affecting other
   const home = join(root, "home")
   const global = join(config, "opencode.jsonc")
   await (await import("node:fs/promises")).mkdir(config, { recursive: true })
-  await writeFile(global, '{"plugin":["keep-plugin"]}\n')
+  await writeFile(global, '{"plugins":["keep-plugin"]}\n')
   try {
     run(["install", "--mode", "standard", "--yes", "--skip-secrets", "--config-dir", config], { PLAN_SPEC_HOME: home })
     await writeFile(global, `{
-  "plugin": [
+  "plugins": [
     "keep-plugin",
-    "@wagzhi/plan-spec-plugin@^0.2.1"
+    "@wagzhi/plan-spec-plugin@^0.3.1"
   ]
 }\n`)
 
     run(["uninstall", "--config-dir", config], { PLAN_SPEC_HOME: home })
-    assert.deepEqual(JSON.parse(await readFile(global, "utf8")).plugin, ["keep-plugin"])
+    assert.deepEqual(JSON.parse(await readFile(global, "utf8")).plugins, ["keep-plugin"])
   } finally {
     await rm(root, { recursive: true, force: true })
   }
@@ -143,7 +143,7 @@ test("uninstall removes the managed AGENTS block after user edits without creati
   const home = join(root, "home")
   const agents = join(config, "AGENTS.md")
   await (await import("node:fs/promises")).mkdir(config, { recursive: true })
-  await writeFile(join(config, "opencode.jsonc"), '{"plugin":["keep-plugin"]}\n')
+  await writeFile(join(config, "opencode.jsonc"), '{"plugins":["keep-plugin"]}\n')
   await writeFile(agents, "# User instructions\n")
   try {
     run(["install", "--mode", "standard", "--yes", "--skip-secrets", "--config-dir", config], { PLAN_SPEC_HOME: home })
@@ -173,29 +173,29 @@ test("install manages only plan-spec permission rules and uninstall restores the
   const planConfig = join(config, "plan-spec.jsonc")
   await (await import("node:fs/promises")).mkdir(config, { recursive: true })
   await writeFile(planConfig, `{
-  "permission": {
-    "edit": "ask",
-    "context7_*": "ask"
-  }
+  "permissions": [
+    { "action": "edit", "resource": "*", "effect": "ask" },
+    { "action": "context7_*", "resource": "*", "effect": "ask" }
+  ]
 }\n`)
   try {
     run(["install", "--mode", "standard", "--yes", "--skip-secrets", "--config-dir", config], { PLAN_SPEC_HOME: home })
     const installed = JSON.parse(await readFile(planConfig, "utf8"))
-    assert.deepEqual(installed.permission, {
-      edit: "ask",
-      "context7_*": "deny",
-      "chrome_devtools_*": "deny",
-    })
+    assert.deepEqual(installed.permissions, [
+      { action: "edit", resource: "*", effect: "ask" },
+      { action: "context7_*", resource: "*", effect: "deny" },
+      { action: "chrome_devtools_*", resource: "*", effect: "deny" },
+    ])
 
     const doctor = JSON.parse(run(["doctor", "--json", "--config-dir", config], { PLAN_SPEC_HOME: home }))
     assert.equal(doctor.find((check) => check.name === "context7_* permission").ok, true)
     assert.equal(doctor.find((check) => check.name === "chrome_devtools_* permission").ok, true)
 
     run(["uninstall", "--config-dir", config], { PLAN_SPEC_HOME: home })
-    assert.deepEqual(JSON.parse(await readFile(planConfig, "utf8")).permission, {
-      edit: "ask",
-      "context7_*": "ask",
-    })
+    assert.deepEqual(JSON.parse(await readFile(planConfig, "utf8")).permissions, [
+      { action: "edit", resource: "*", effect: "ask" },
+      { action: "context7_*", resource: "*", effect: "ask" },
+    ])
   } finally {
     await rm(root, { recursive: true, force: true })
   }
@@ -303,7 +303,7 @@ test("lite install upgrades to standard in place and can be uninstalled", async 
     run(["install", "--mode", "lite", "--yes", "--skip-secrets", "--config-dir", config], env)
     run(["install", "--mode", "standard", "--yes", "--skip-secrets", "--config-dir", config], env)
 
-    assert.match(await readFile(join(config, "opencode.jsonc"), "utf8"), /@wagzhi\/plan-spec-plugin@\^0\.2\.0/)
+    assert.match(await readFile(join(config, "opencode.jsonc"), "utf8"), /@wagzhi\/plan-spec-plugin@\^0\.3\.0/)
     assert.match(await readFile(join(config, "plan-spec.jsonc"), "utf8"), /"gitee"/)
     assert.match(await readFile(join(config, "agents", "ask-agent.md"), "utf8"), /mode: subagent/)
     assert.match(await readFile(join(config, "AGENTS.md"), "utf8"), /## Managed Subagents/)

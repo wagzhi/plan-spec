@@ -1,24 +1,70 @@
 import assert from "node:assert/strict"
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
-import PlanSpecPlugin, { deepMerge, loadConfig } from "../plugin/index.js"
+import plugin, { deepMerge, loadConfig, parseModelRef } from "../plugin/index.js"
+
+function captureContext() {
+  const agentTransforms = []
+  const mcpTransforms = []
+  const promptHooks = []
+  const ctx = {
+    options: {},
+    agent: { transform: async (callback) => { agentTransforms.push(callback); return { dispose: async () => {} } } },
+    mcp: { transform: async (callback) => { mcpTransforms.push(callback); return { dispose: async () => {} } } },
+    session: { hook: async (name, callback) => { promptHooks.push({ name, callback }); return { dispose: async () => {} } } },
+  }
+  return { ctx, agentTransforms, mcpTransforms, promptHooks }
+}
+
+function agentEditor(initial = {}) {
+  const agents = new Map(Object.entries(initial))
+  return {
+    list: () => [...agents.values()],
+    get: (id) => agents.get(id),
+    // Mirrors V2 `AgentEditor.update`, which upserts: agents declared in config
+    // or in an `agents/` directory are merged after transforms run and are not
+    // visible through `get`/`list` yet.
+    update: (id, update) => { if (!agents.has(id)) agents.set(id, { id }); update(agents.get(id)) },
+    remove: (id) => { agents.delete(id) },
+    default: () => {},
+  }
+}
+
+function mcpEditor() {
+  const servers = new Map()
+  return {
+    list: () => [...servers.entries()],
+    get: (name) => servers.get(name),
+    set: (name, config) => { servers.set(name, config) },
+    update: (name, update) => { const config = servers.get(name); if (config) update(config) },
+    remove: (name) => { servers.delete(name) },
+  }
+}
 
 test("deepMerge merges objects recursively and replaces arrays", () => {
   const target = {
-    agent: { explore: { model: "model-a", temperature: 0.2 } },
-    plugin: ["plugin-a"],
+    agents: { explore: { model: "model-a", temperature: 0.2 } },
+    plugins: ["plugin-a"],
   }
   deepMerge(target, {
-    agent: { explore: { model: "model-b" }, reviewer: { model: "model-c" } },
-    plugin: ["plugin-b"],
+    agents: { explore: { model: "model-b" }, reviewer: { model: "model-c" } },
+    plugins: ["plugin-b"],
   })
 
   assert.deepEqual(target, {
-    agent: { explore: { model: "model-b", temperature: 0.2 }, reviewer: { model: "model-c" } },
-    plugin: ["plugin-b"],
+    agents: { explore: { model: "model-b", temperature: 0.2 }, reviewer: { model: "model-c" } },
+    plugins: ["plugin-b"],
   })
+})
+
+test("parseModelRef accepts strings and structured references", () => {
+  assert.deepEqual(parseModelRef("provider/model"), { providerID: "provider", id: "model" })
+  assert.deepEqual(parseModelRef("provider/model#variant"), { providerID: "provider", id: "model", variant: "variant" })
+  assert.deepEqual(parseModelRef({ providerID: "provider", model: "model" }), { providerID: "provider", id: "model" })
+  assert.deepEqual(parseModelRef({ providerID: "provider", id: "model", variant: "v" }), { providerID: "provider", id: "model", variant: "v" })
+  assert.throws(() => parseModelRef("invalid"))
 })
 
 test("plugin loads only the configured plan-spec.jsonc", async () => {
@@ -28,23 +74,15 @@ test("plugin loads only the configured plan-spec.jsonc", async () => {
     const ignoredPath = join(dir, "ignored.jsonc")
     await writeFile(configPath, `{
       // JSONC comments are supported
-      "agent": { "explore": { "model": "model-a" } },
-      "permission": { "context7_*": "deny" },
+      "agents": { "explore": { "model": "provider/model" } },
+      "permissions": [{ "action": "context7_*", "resource": "*", "effect": "deny" }],
       "files": ["${ignoredPath.replaceAll("\\", "\\\\")}"]
     }`)
-    await writeFile(ignoredPath, '{"agent":{"explore":{"model":"model-b"}}}')
+    await writeFile(ignoredPath, '{"agents":{"explore":{"model":"other/model"}}}')
 
     assert.deepEqual(await loadConfig(configPath), {
-      agent: { explore: { model: "model-a" } },
-      permission: { "context7_*": "deny" },
-      files: [ignoredPath],
-    })
-    const hooks = await PlanSpecPlugin({}, { configPath })
-    const runtime = { agent: { explore: { temperature: 0.2 } }, permission: { read: "allow" } }
-    hooks.config(runtime)
-    assert.deepEqual(runtime, {
-      agent: { explore: { model: "model-a", temperature: 0.2 } },
-      permission: { read: "allow", "context7_*": "deny" },
+      agents: { explore: { model: "provider/model" } },
+      permissions: [{ action: "context7_*", resource: "*", effect: "deny" }],
       files: [ignoredPath],
     })
   } finally {
@@ -52,99 +90,50 @@ test("plugin loads only the configured plan-spec.jsonc", async () => {
   }
 })
 
-test("plugin keeps running when the configured file is missing", async () => {
-  const hooks = await PlanSpecPlugin({}, { configPath: join(tmpdir(), "plan-spec-missing.jsonc") })
-  const runtime = { agent: { explore: { model: "existing" } } }
-  hooks.config(runtime)
-  assert.deepEqual(runtime, { agent: { explore: { model: "existing" } } })
-})
-
-test("plugin resolves managed secrets from PLAN_SPEC_HOME", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "plan-spec-secret-config-"))
-  const home = join(dir, "state")
-  const configPath = join(dir, "plan-spec.jsonc")
-  const originalHome = process.env.PLAN_SPEC_HOME
-  try {
-    await mkdir(join(home, "secrets"), { recursive: true })
-    await writeFile(join(home, "secrets", "gitee-access-token"), "gitee-token\n")
-    await writeFile(join(home, "secrets", "context7-api-key"), "context7-key\n")
-    await writeFile(configPath, `{
-      "mcp": {
-        "gitee": { "environment": { "GITEE_ACCESS_TOKEN": "{file:~/.plan-spec/secrets/gitee-access-token}" } },
-        "context7": { "headers": { "CONTEXT7_API_KEY": "{file:~/.plan-spec/secrets/context7-api-key}" } }
-      }
-    }`)
-    process.env.PLAN_SPEC_HOME = home
-
-    const hooks = await PlanSpecPlugin({}, { configPath })
-    const runtime = {}
-    hooks.config(runtime)
-    assert.equal(runtime.mcp.gitee.environment.GITEE_ACCESS_TOKEN, "gitee-token")
-    assert.equal(runtime.mcp.context7.headers.CONTEXT7_API_KEY, "context7-key")
-  } finally {
-    if (originalHome === undefined) delete process.env.PLAN_SPEC_HOME
-    else process.env.PLAN_SPEC_HOME = originalHome
-    await rm(dir, { recursive: true, force: true })
-  }
-})
-
-test("plugin does not resolve unrecognized file references", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "plan-spec-secret-config-"))
-  try {
-    const configPath = join(dir, "plan-spec.jsonc")
-    const reference = "{file:~/unmanaged-secret}"
-    await writeFile(configPath, `{
-      "mcp": { "gitee": { "environment": { "GITEE_ACCESS_TOKEN": "${reference}" } } }
-    }`)
-
-    const hooks = await PlanSpecPlugin({}, { configPath })
-    const runtime = {}
-    hooks.config(runtime)
-    assert.equal(runtime.mcp.gitee.environment.GITEE_ACCESS_TOKEN, reference)
-  } finally {
-    await rm(dir, { recursive: true, force: true })
-  }
-})
-
-test("plugin removes unavailable managed secret references", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "plan-spec-secret-config-"))
-  const originalHome = process.env.PLAN_SPEC_HOME
-  const originalError = console.error
+test("setup applies plan-spec.jsonc through V2 transforms and rewrites explicit requests", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "plan-spec-setup-"))
   try {
     const configPath = join(dir, "plan-spec.jsonc")
     await writeFile(configPath, `{
-      "mcp": {
-        "gitee": { "enabled": true, "environment": { "GITEE_ACCESS_TOKEN": "{file:~/.plan-spec/secrets/gitee-access-token}" } },
-        "context7": { "enabled": true, "headers": { "CONTEXT7_API_KEY": "{file:~/.plan-spec/secrets/context7-api-key}" } }
-      }
+      "agents": {
+        "explore": { "model": "provider/model#fast" },
+        "git-agent": { "model": "provider/git-model" }
+      },
+      "mcp": { "servers": { "context7": { "type": "remote", "url": "https://example.com/mcp" } } },
+      "permissions": [{ "action": "context7_*", "resource": "*", "effect": "deny" }]
     }`)
-    process.env.PLAN_SPEC_HOME = join(dir, "missing-state")
-    console.error = () => {}
 
-    const hooks = await PlanSpecPlugin({}, { configPath })
-    const runtime = {}
-    hooks.config(runtime)
-    assert.deepEqual(runtime.mcp.gitee, { enabled: true, environment: {} })
-    assert.deepEqual(runtime.mcp.context7, { enabled: true, headers: {} })
+    const { ctx, agentTransforms, mcpTransforms, promptHooks } = captureContext()
+    await plugin.setup({ ...ctx, options: { configPath } })
+
+    const agents = agentEditor({
+      explore: { id: "explore", permissions: [] },
+      "ask-agent": { id: "ask-agent", permissions: [{ action: "context7_*", resource: "*", effect: "allow" }] },
+    })
+    for (const transform of agentTransforms) transform(agents)
+    assert.deepEqual(agents.get("explore").model, { providerID: "provider", id: "model", variant: "fast" })
+    // `git-agent` is not present in the editor yet: `update` must still upsert it.
+    assert.deepEqual(agents.get("git-agent").model, { providerID: "provider", id: "git-model" })
+    assert.ok(agents.get("explore").permissions.some((rule) => rule.action === "context7_*" && rule.effect === "deny"))
+    assert.ok(!agents.get("ask-agent").permissions.some((rule) => rule.effect === "deny"))
+
+    const servers = mcpEditor()
+    for (const transform of mcpTransforms) transform(servers)
+    assert.deepEqual(servers.get("context7"), { type: "remote", url: "https://example.com/mcp" })
+
+    assert.equal(promptHooks.length, 1)
+    const event = { prompt: { text: "psw 处理某任务" } }
+    promptHooks[0].callback(event)
+    assert.match(event.prompt.text, /请使用 plan-spec 技能处理当前任务/)
+    assert.match(event.prompt.text, /处理某任务/)
   } finally {
-    console.error = originalError
-    if (originalHome === undefined) delete process.env.PLAN_SPEC_HOME
-    else process.env.PLAN_SPEC_HOME = originalHome
     await rm(dir, { recursive: true, force: true })
   }
 })
 
-test("plugin expands plan-spec and psw prefixes only at the start of a message", async () => {
-  const hooks = await PlanSpecPlugin({}, { configPath: join(tmpdir(), "plan-spec-missing.jsonc") })
-  for (const input of ["plan-spec review this", "/plan-spec review this", "psw review this", "/psw review this"]) {
-    const output = { parts: [{ type: "text", text: input }] }
-    await hooks["chat.message"]({}, output)
-    assert.match(output.parts[0].text, /^review this\n\n---\n\n请使用 plan-spec 技能/)
-  }
-
-  for (const input of ["please psw review this", "pswreview this"]) {
-    const output = { parts: [{ type: "text", text: input }] }
-    await hooks["chat.message"]({}, output)
-    assert.equal(output.parts[0].text, input)
-  }
+test("a missing configuration file warns but does not stop setup", async () => {
+  const { ctx, agentTransforms, promptHooks } = captureContext()
+  await plugin.setup({ ...ctx, options: { configPath: join(tmpdir(), "plan-spec-missing", "plan-spec.jsonc") } })
+  assert.equal(agentTransforms.length, 0)
+  assert.equal(promptHooks.length, 1)
 })

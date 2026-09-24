@@ -90,7 +90,7 @@ Mode changes are one-way in place:
 | Resource | Purpose |
 | --- | --- |
 | `skills/plan-spec/` | Project planning, execution tracking, and result backfilling workflow (both modes) |
-| `@wagzhi/plan-spec-plugin@^0.2.0` | Standard mode only. Loads `plan-spec.jsonc` and expands explicit plan-spec requests |
+| `@wagzhi/plan-spec-plugin@^0.3.0` | Standard mode only. Loads `plan-spec.jsonc` and expands explicit plan-spec requests |
 | `@ask-agent` | Standard mode only. Project-aware answers using local code and third-party documentation |
 | `@doc-agent` | Standard mode only. Third-party documentation, SDK, API, and specification lookup |
 | `@git-agent` | Standard mode only. Requested local Git operations |

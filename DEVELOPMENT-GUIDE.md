@@ -32,21 +32,30 @@ CLI 有两个独立的状态目标，`--config-dir` 只能隔离其中一个：
 默认目录 `~/.config/opencode` 使用插件自身的默认配置路径，因此写入：
 
 ```jsonc
-"plugin": ["@wagzhi/plan-spec-plugin@^0.2.0"]
+"plugins": ["@wagzhi/plan-spec-plugin@^0.3.0"]
 ```
 
-使用非默认 `--config-dir` 时，插件需要显式读取该目录的 `plan-spec.jsonc`，因此写入带 `configPath` 的插件项。
-
-安装器还会在 `plan-spec.jsonc` 的根级 `permission` 写入以下全局 deny 规则：
+使用非默认 `--config-dir` 时，插件需要显式读取该目录的 `plan-spec.jsonc`，因此写入带 `configPath` 的插件项：
 
 ```jsonc
-"permission": {
-  "context7_*": "deny",
-  "chrome_devtools_*": "deny"
-}
+"plugins": [
+  {
+    "package": "@wagzhi/plan-spec-plugin@^0.3.0",
+    "options": { "configPath": "<config-dir>/plan-spec.jsonc" }
+  }
+]
 ```
 
-插件会将其深度合并到 OpenCode runtime config。agent 自身的权限优先于全局规则，因此 `@doc-agent`、`@ask-agent` 的 Context7 allow 与 `@web-debug` 的 Chrome DevTools allow 仍然可用；主 agent 则不能直接调用这些工具。
+安装器还会在 `plan-spec.jsonc` 的根级 `permissions` 写入以下全局 deny 规则（V2 的有序规则数组）：
+
+```jsonc
+"permissions": [
+  { "action": "context7_*", "resource": "*", "effect": "deny" },
+  { "action": "chrome_devtools_*", "resource": "*", "effect": "deny" }
+]
+```
+
+插件通过 `ctx.agent.transform` 把它们注入到内置 agent，以及 `agents` 中列出的每个 agent；若某个 agent 已定义相同 `action` + `resource` 的规则，则不再注入，因此 agent 自身的权限优先。`@doc-agent`、`@ask-agent` 的 Context7 allow 与 `@web-debug` 的 Chrome DevTools allow 仍然可用；主 agent 则不能直接调用这些工具。
 
 ## AGENTS 路由模板
 
@@ -103,10 +112,10 @@ npm pack --dry-run   # 或 npm pack，检查 tarball 内容，不发布
 
 ## 插件层测试（纯 node，不依赖 opencode）
 
-`plugin/index.js` 的 `PlanSpecPlugin` 是纯函数，可直接 import 单测：
+`plugin/index.js` 默认导出一个 V2 插件定义（`{ id, setup }`），可用一个伪造的 `ctx` 直接 import 单测：
 
-- `chat.message`：喂入 `"plan-spec 处理某任务"`，断言输出被注入「请使用 plan-spec 技能」指令；
-- `config`：构造一个含合并内容的临时 `plan-spec.jsonc`，断言其被 `deepMerge` 进 runtime config；
+- `ctx.session.hook("prompt", ...)`：喂入 `"plan-spec 处理某任务"`，断言输出被注入「请使用 plan-spec 技能」指令；
+- `ctx.agent.transform` / `ctx.mcp.transform`：构造一个含合并内容的临时 `plan-spec.jsonc`，断言 agent 覆盖（`editor.update`）与 MCP（`editor.set`）被调用。注意 `AgentEditor.update` 是 upsert：即使 `editor.get(id)` 当时为空（配置/文件 agent 在 transform 之后才合并），也要断言覆盖被写入；
 - 缺配置文件：断言只打 warning、不抛错。
 
 仓库已有 `tests/**/*.test.mjs`，普通单测可并入 `npm test`（它只跑 `tsc + node --test`，不会发布）。
@@ -117,18 +126,16 @@ npm pack --dry-run   # 或 npm pack，检查 tarball 内容，不发布
 
 ```powershell
 # 在仓库根目录生成插件 tarball
-pnpm pack ./plugin
+npm pack ./plugin
 ```
 
-该命令生成 `wagzhi-plan-spec-plugin-<version>.tgz`。在目标 OpenCode 配置的 `plugin` 数组中，用 `file:` 前缀引用它。不要直接写 `./wagzhi-plan-spec-plugin-<version>.tgz`，否则 OpenCode 会将 tgz 当作可直接 import 的源码路径。
+该命令生成 `wagzhi-plan-spec-plugin-<version>.tgz`。在目标 OpenCode 配置的 `plugins` 数组中，用 `file:` 前缀引用它。不要直接写 `./wagzhi-plan-spec-plugin-<version>.tgz`，否则 OpenCode 会将 tgz 当作可直接 import 的源码路径。V2 用对象形式的插件项传入 `options`。
 
 默认配置目录 `~/.config/opencode` 中，插件使用默认 `plan-spec.jsonc` 路径：
 
 ```jsonc
 {
-  "plugin": [
-    "file:./wagzhi-plan-spec-plugin-0.2.0.tgz"
-  ]
+  "plugins": ["file:./wagzhi-plan-spec-plugin-0.3.0.tgz"]
 }
 ```
 
@@ -136,23 +143,23 @@ pnpm pack ./plugin
 
 ```jsonc
 {
-  "plugin": [
-    [
-      "file:./wagzhi-plan-spec-plugin-0.2.0.tgz",
-      {
+  "plugins": [
+    {
+      "package": "file:./wagzhi-plan-spec-plugin-0.3.0.tgz",
+      "options": {
         "configPath": "E:/workspace/plan-spec/temp/test-opencode/plan-spec.jsonc"
       }
-    ]
+    }
   ]
 }
 ```
 
 - `file:./...` 相对于启动 `opencode` 时的当前工作目录，而不是相对于配置文件。以上示例应从仓库根目录启动 `opencode`。
-- 替换安装器写入的 `@wagzhi/plan-spec-plugin@^0.2.0`，不要同时保留 npm 包和本地 tgz，否则两个来源都可能被加载。
-- 当前 `plugin/index.js` 未导出本地路径插件所需的 `id`，因此不要把 `plugin/` 目录或 `file:///.../plugin` 直接加入配置；本项目的本地测试应使用 tgz。
-- 修改插件后重新打包。为避免使用相同文件名时的安装缓存，建议提升 `plugin/package.json` 的本地预发布版本，例如 `0.2.1-local.1`，并更新配置中的 tgz 文件名。
+- 替换安装器写入的 `@wagzhi/plan-spec-plugin@^0.3.0`，不要同时保留 npm 包和本地 tgz，否则两个来源都可能被加载。
+- **`file:` tgz 会按路径缓存解包结果**：覆盖同名 tgz 后 OpenCode 仍可能复用旧缓存（位于 `~/.cache/opencode/npm/file_*/...`）。要么先删除对应缓存目录，要么提升 `plugin/package.json` 的本地预发布版本（例如 `0.3.1-local.1`）并更新配置中的 tgz 文件名。
+- `plugin/index.js` 已导出稳定的 `id`（`wagzhi.plan-spec`），也支持 V2 的目录插件；但目录插件需要其依赖（`jsonc-parser`）可解析，因此常规本地验证仍推荐 tgz。
 
-重启 OpenCode 后，可执行 `opencode debug config` 检查配置解析结果；输入 `/plan-spec <task>`、`psw <task>` 或 `/psw <task>`，确认消息被改写为 skill 指令。设置 `PLAN_SPEC_CONFIG_DEBUG=1` 可输出插件加载与配置合并日志。
+重启 OpenCode 后，可执行 `opencode debug config` 检查配置解析结果；输入 `/plan-spec <task>`、`psw <task>` 或 `/psw <task>`，确认消息被改写为 skill 指令。设置 `PLAN_SPEC_CONFIG_DEBUG=1` 可输出插件加载与配置应用日志。
 
 ## 从 0.1.x 真实环境升级（会改真实配置，谨慎）
 

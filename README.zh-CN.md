@@ -79,7 +79,7 @@
 | 资源 | 用途 |
 | --- | --- |
 | `skills/plan-spec/` | 项目计划、执行追踪和结果回填工作流（两种模式） |
-| `@wagzhi/plan-spec-plugin@^0.2.0` | 仅 standard 模式。加载 `plan-spec.jsonc` 并展开显式 plan-spec 请求 |
+| `@wagzhi/plan-spec-plugin@^0.3.0` | 仅 standard 模式。加载 `plan-spec.jsonc` 并展开显式 plan-spec 请求 |
 | `@ask-agent` | 仅 standard 模式。结合本地代码和第三方文档回答项目问题 |
 | `@doc-agent` | 仅 standard 模式。查询第三方文档、SDK、API 和技术规范 |
 | `@git-agent` | 仅 standard 模式。执行用户请求的本地 Git 操作 |

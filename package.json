@@ -1,6 +1,6 @@
 {
   "name": "@wagzhi/plan-spec",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Install and manage the plan-spec workflow for OpenCode.",
   "license": "MIT",
   "type": "module",

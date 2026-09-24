@@ -17,6 +17,12 @@ export type Options = {
   mode?: string
 }
 
+export type PermissionRule = {
+  action: string
+  resource: string
+  effect: "allow" | "deny" | "ask"
+}
+
 type Manifest = {
   version: string
   mode: InstallMode
@@ -27,15 +33,15 @@ type Manifest = {
   configBefore: Record<string, unknown>
   managedModels: Record<string, string>
   managedMcps: Record<string, unknown>
-  managedPermissions?: Record<string, string>
+  managedPermissions?: PermissionRule[]
   managedPlugin: unknown
   pluginBefore?: unknown
 }
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..")
 const assets = join(packageRoot, "assets")
-const planSpecPlugin = "@wagzhi/plan-spec-plugin@^0.2.0"
-const manifestVersion = "0.3.0"
+const planSpecPlugin = "@wagzhi/plan-spec-plugin@^0.3.0"
+const manifestVersion = "0.4.0"
 const managedBlockStandardPath = join(assets, "templates", "plan-spec-routing.md")
 const managedBlockLitePath = join(assets, "templates", "plan-spec-routing-lite.md")
 const managedBlockExpression = /<!-- plan-spec-package:begin -->[\s\S]*?<!-- plan-spec-package:end -->/
@@ -54,12 +60,12 @@ const mcps = {
     type: "remote",
     url: "https://mcp.context7.com/mcp",
     headers: { CONTEXT7_API_KEY: "{file:~/.plan-spec/secrets/context7-api-key}" },
-    enabled: true,
+    disabled: false,
   },
   gitee: {
     type: "local",
     command: ["npx", "-y", "@gitee/mcp-gitee@latest"],
-    enabled: true,
+    disabled: false,
     environment: {
       GITEE_API_BASE: "https://gitee.com/api/v5",
       GITEE_ACCESS_TOKEN: "{file:~/.plan-spec/secrets/gitee-access-token}",
@@ -68,14 +74,14 @@ const mcps = {
   chrome_devtools: {
     type: "local",
     command: ["npx", "chrome-devtools-mcp@latest"],
-    enabled: true,
+    disabled: false,
   },
 }
 
-const permissions = {
-  "context7_*": "deny",
-  "chrome_devtools_*": "deny",
-}
+const permissions: PermissionRule[] = [
+  { action: "context7_*", resource: "*", effect: "deny" },
+  { action: "chrome_devtools_*", resource: "*", effect: "deny" },
+]
 
 function hash(value: Buffer | string) {
   return createHash("sha256").update(value).digest("hex")
@@ -211,15 +217,20 @@ async function writeRouting(dir: string, files: Record<string, string>, mode: In
 
 function pluginName(item: unknown) {
   if (typeof item === "string") return item
-  return Array.isArray(item) && typeof item[0] === "string" ? item[0] : undefined
+  if (Array.isArray(item) && typeof item[0] === "string") return item[0]
+  if (item && typeof item === "object" && typeof (item as { package?: unknown }).package === "string") return (item as { package: string }).package
+  return undefined
 }
 
 function isPlanSpecPlugin(item: unknown) {
   return /^@wagzhi\/plan-spec-plugin(?:@.+)?$/.test(pluginName(item) ?? "")
 }
 
+// V2 entries are either a package string or a `{ package, options }` object.
 function pluginEntry(dir: string, planSpecConfig: string) {
-  return dir === defaultConfigDir() ? planSpecPlugin : [planSpecPlugin, { configPath: planSpecConfig }]
+  return dir === defaultConfigDir()
+    ? planSpecPlugin
+    : { package: planSpecPlugin, options: { configPath: planSpecConfig } }
 }
 
 function configuredModels(overrides: string[] = []) {
@@ -236,7 +247,7 @@ async function loadManifest() {
   const path = join(planSpecHome(), "manifest.json")
   if (!(await exists(path))) return undefined
   const manifest = JSON.parse(await readFile(path, "utf8")) as Manifest
-  if (!/^0\.[23]\./.test(manifest.version)) throw new Error(`Unsupported plan-spec installation manifest version: ${manifest.version}. Uninstall version 0.1.x before installing 0.2.x or later.`)
+  if (!/^0\.[234]\./.test(manifest.version)) throw new Error(`Unsupported plan-spec installation manifest version: ${manifest.version}. Uninstall version 0.1.x before installing 0.2.x or later.`)
   return { ...manifest, mode: manifest.mode ?? "standard" }
 }
 
@@ -288,24 +299,31 @@ export async function install(options: Options, secrets: { gitee?: string; conte
   const planLoaded = await loadJsonc(planConfig)
   const files: Record<string, string> = {}
   const activeModels = isLite ? {} : configuredModels(options.model)
-  const activePermissions: Record<string, string> = isLite ? {} : { ...permissions }
+  const managedPermissions: PermissionRule[] = permissions.map((permission) => ({ ...permission }))
+  const previousPermissions = Array.isArray(planLoaded.data.permissions) ? (planLoaded.data.permissions as PermissionRule[]) : []
+  const activePermissions: PermissionRule[] = isLite
+    ? []
+    : [
+        ...previousPermissions.filter((item) => !managedPermissions.some((rule) => item?.action === rule.action && item?.resource === rule.resource)),
+        ...managedPermissions,
+      ]
   const disabled = new Set(options.disableMcp ?? [])
   for (const name of disabled) if (!(name in mcps)) throw new Error(`Unknown MCP: ${name}`)
-  const activeMcps = isLite ? {} : Object.fromEntries(Object.entries(mcps).map(([name, value]) => [name, { ...value, enabled: !disabled.has(name) }]))
+  const activeMcps = isLite ? {} : Object.fromEntries(Object.entries(mcps).map(([name, value]) => [name, { ...value, disabled: disabled.has(name) }]))
 
-  const plugins = Array.isArray(globalLoaded.data.plugin) ? globalLoaded.data.plugin : []
+  const plugins = Array.isArray(globalLoaded.data.plugins) ? globalLoaded.data.plugins : []
   const oldPlugin = plugins.findIndex(isPlanSpecPlugin)
   let managedPlugin: unknown
   let pluginBefore: unknown
   if (!isLite) {
     managedPlugin = pluginEntry(dir, planConfig)
     pluginBefore = standardBaseline ? existingManifest?.pluginBefore : oldPlugin >= 0 ? plugins[oldPlugin] : undefined
-    await writeJsonc(global, [{ path: ["plugin", oldPlugin >= 0 ? oldPlugin : plugins.length], value: managedPlugin }])
+    await writeJsonc(global, [{ path: ["plugins", oldPlugin >= 0 ? oldPlugin : plugins.length], value: managedPlugin }])
 
     const planChanges: Array<{ path: (string | number)[]; value: unknown }> = [
-      ...Object.entries(activeModels).map(([name, model]) => ({ path: ["agent", name, "model"], value: model })),
-      ...Object.entries(activeMcps).map(([name, value]) => ({ path: ["mcp", name], value })),
-      ...Object.entries(activePermissions).map(([name, value]) => ({ path: ["permission", name], value })),
+      ...Object.entries(activeModels).map(([name, model]) => ({ path: ["agents", name, "model"], value: model })),
+      ...Object.entries(activeMcps).map(([name, value]) => ({ path: ["mcp", "servers", name], value })),
+      ...(activePermissions.length ? [{ path: ["permissions"], value: activePermissions }] : []),
     ]
     await writeJsonc(planConfig, planChanges)
   }
@@ -328,7 +346,7 @@ export async function install(options: Options, secrets: { gitee?: string; conte
     configBefore: standardBaseline ? (existingManifest?.configBefore ?? {}) : planLoaded.data,
     managedModels: activeModels,
     managedMcps: activeMcps,
-    managedPermissions: activePermissions,
+    managedPermissions,
     managedPlugin,
     pluginBefore,
   }
@@ -358,7 +376,7 @@ export async function doctor(options: Options) {
   try {
     const global = await loadJsonc(await configPath(dir))
     checks.push({ name: "config", ok: true, detail: "Global config parses" })
-    if (!isLite) checks.push({ name: "plan-spec plugin", ok: Array.isArray(global.data.plugin) && global.data.plugin.some(isPlanSpecPlugin), detail: planSpecPlugin })
+    if (!isLite) checks.push({ name: "plan-spec plugin", ok: Array.isArray(global.data.plugins) && global.data.plugins.some(isPlanSpecPlugin), detail: planSpecPlugin })
   }
   catch (error) { checks.push({ name: "config", ok: false, detail: error instanceof Error ? error.message : String(error) }) }
 
@@ -374,9 +392,10 @@ export async function doctor(options: Options) {
       const expectedModels = manifest?.managedModels ?? models
       const expectedMcps = manifest?.managedMcps ?? mcps
       const expectedPermissions = manifest?.managedPermissions ?? permissions
-      for (const [name, model] of Object.entries(expectedModels)) checks.push({ name: `${name} model`, ok: getAt(config.data, ["agent", name, "model"]) === model, detail: model })
-      for (const [name, mcp] of Object.entries(expectedMcps)) checks.push({ name: `${name} MCP`, ok: same(getAt(config.data, ["mcp", name]), mcp), detail: "Managed MCP definition" })
-      for (const [name, permission] of Object.entries(expectedPermissions)) checks.push({ name: `${name} permission`, ok: getAt(config.data, ["permission", name]) === permission, detail: permission })
+      for (const [name, model] of Object.entries(expectedModels)) checks.push({ name: `${name} model`, ok: getAt(config.data, ["agents", name, "model"]) === model, detail: model })
+      for (const [name, mcp] of Object.entries(expectedMcps)) checks.push({ name: `${name} MCP`, ok: same(getAt(config.data, ["mcp", "servers", name]), mcp), detail: "Managed MCP definition" })
+      const installedPermissions = Array.isArray(getAt(config.data, ["permissions"])) ? (getAt(config.data, ["permissions"]) as PermissionRule[]) : []
+      for (const permission of expectedPermissions) checks.push({ name: `${permission.action} permission`, ok: installedPermissions.some((item) => same(item, permission)), detail: permission.effect })
     }
     catch (error) { checks.push({ name: "plan-spec config", ok: false, detail: error instanceof Error ? error.message : String(error) }) }
     for (const secret of ["gitee-access-token", "context7-api-key"]) checks.push({ name: secret, ok: await exists(join(planSpecHome(), "secrets", secret)), detail: "Optional secret file" })
@@ -406,27 +425,32 @@ export async function uninstall(options: Options) {
   if (manifest.mode !== "lite") {
     const global = await configPath(manifest.configDir)
     const globalLoaded = await loadJsonc(global)
-    if (Array.isArray(globalLoaded.data.plugin)) {
-      const index = globalLoaded.data.plugin.findIndex(isPlanSpecPlugin)
-      if (index >= 0) await writeJsonc(global, [{ path: ["plugin", index], value: manifest.pluginBefore, isDeletion: manifest.pluginBefore === undefined }], false)
+    if (Array.isArray(globalLoaded.data.plugins)) {
+      const index = globalLoaded.data.plugins.findIndex(isPlanSpecPlugin)
+      if (index >= 0) await writeJsonc(global, [{ path: ["plugins", index], value: manifest.pluginBefore, isDeletion: manifest.pluginBefore === undefined }], false)
     }
 
     const config = await loadJsonc(manifest.planSpecConfig)
     const configChanges: Array<{ path: (string | number)[]; value: unknown; isDeletion?: boolean }> = []
     for (const [name, expected] of Object.entries(manifest.managedMcps)) {
-      if (!same(getAt(config.data, ["mcp", name]), expected)) { addPreserved(preserved, manifest.planSpecConfig); continue }
-      const previous = getAt(manifest.configBefore, ["mcp", name])
-      configChanges.push({ path: ["mcp", name], value: previous, isDeletion: previous === undefined })
+      if (!same(getAt(config.data, ["mcp", "servers", name]), expected)) { addPreserved(preserved, manifest.planSpecConfig); continue }
+      const previous = getAt(manifest.configBefore, ["mcp", "servers", name])
+      configChanges.push({ path: ["mcp", "servers", name], value: previous, isDeletion: previous === undefined })
     }
     for (const [name, expected] of Object.entries(manifest.managedModels)) {
-      if (getAt(config.data, ["agent", name, "model"]) !== expected) { addPreserved(preserved, manifest.planSpecConfig); continue }
-      const previous = getAt(manifest.configBefore, ["agent", name, "model"])
-      configChanges.push({ path: ["agent", name, "model"], value: previous, isDeletion: previous === undefined })
+      if (getAt(config.data, ["agents", name, "model"]) !== expected) { addPreserved(preserved, manifest.planSpecConfig); continue }
+      const previous = getAt(manifest.configBefore, ["agents", name, "model"])
+      configChanges.push({ path: ["agents", name, "model"], value: previous, isDeletion: previous === undefined })
     }
-    for (const [name, expected] of Object.entries(manifest.managedPermissions ?? {})) {
-      if (getAt(config.data, ["permission", name]) !== expected) { addPreserved(preserved, manifest.planSpecConfig); continue }
-      const previous = getAt(manifest.configBefore, ["permission", name])
-      configChanges.push({ path: ["permission", name], value: previous, isDeletion: previous === undefined })
+    const managedPermissions = manifest.managedPermissions ?? []
+    if (managedPermissions.length) {
+      const current = getAt(config.data, ["permissions"])
+      const intact = Array.isArray(current) && managedPermissions.every((rule) => current.some((item) => same(item, rule)))
+      if (!intact) addPreserved(preserved, manifest.planSpecConfig)
+      else {
+        const previous = getAt(manifest.configBefore, ["permissions"])
+        configChanges.push({ path: ["permissions"], value: previous, isDeletion: previous === undefined })
+      }
     }
     if (configChanges.length) await writeJsonc(manifest.planSpecConfig, configChanges, false)
     if (!manifest.planSpecConfigExisted && await exists(manifest.planSpecConfig)) {
