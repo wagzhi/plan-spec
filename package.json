@@ -1,25 +1,27 @@
 {
   "name": "@wagzhi/plan-spec",
-  "version": "0.4.0",
-  "description": "Install and manage the plan-spec workflow for OpenCode.",
+  "version": "0.5.0",
+  "description": "Install the plan-spec skill for OpenCode.",
   "license": "MIT",
   "type": "module",
-  "workspaces": [
-    "plugin"
-  ],
   "bin": {
     "plan-spec": "dist/cli.js"
   },
   "files": [
     "dist",
-    "assets",
+    "assets/skills/plan-spec/SKILL.md",
+    "assets/skills/plan-spec/agents/openai.yaml",
+    "assets/commands/plan-spec.md",
+    "assets/templates/plan-spec-project-routing.md",
+    "assets/templates/plan-spec-routing.md",
+    "assets/templates/plan-spec-routing-lite.md",
     "README.md",
     "README.zh-CN.md",
     "LICENSE"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "npm run build && node --test tests/**/*.test.mjs",
+    "test": "npm run build && node --test tests/*.test.mjs",
     "pack:check": "npm pack --dry-run"
   },
   "engines": {

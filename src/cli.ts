@@ -1,55 +1,51 @@
 #!/usr/bin/env node
-import { intro, outro, password, isCancel, log } from "@clack/prompts"
+import { intro, outro, log } from "@clack/prompts"
 import { Command } from "commander"
-import { currentInstallMode, doctor, install, Options, uninstall } from "./lib.js"
+import { doctor, install, installCommand, Options, uninstall, uninstallCommand, uninstallLegacy } from "./lib.js"
 
-async function secret(label: string, enabled: boolean, skip: boolean) {
-  if (!enabled || skip) return undefined
-  const value = await password({ message: `${label} (leave empty to configure later)` })
-  if (isCancel(value)) throw new Error("Cancelled")
-  return value.trim() || undefined
+function target(command: Command) {
+  return command.option("--scope <scope>", "installation scope: project (default) or global", "project")
+    .option("--project-dir <path>", "project directory (default: current working directory)")
+    .option("--config-dir <path>", "OpenCode global configuration directory (global scope only)")
 }
 
-function common(command: Command) {
-  return command.option("--config-dir <path>", "OpenCode global configuration directory")
-    .option("-y, --yes", "use default choices without prompts")
-    .option("--skip-secrets", "do not request or update secret files")
-    .option("--disable-mcp <names...>", "disable one or more managed MCPs")
-    .option("--model <agent=model...>", "override a managed agent model")
-}
+const program = new Command().name("plan-spec").description("Install the plan-spec skill for OpenCode and Codex").version("0.5.0")
 
-const program = new Command().name("plan-spec").description("Install and manage plan-spec for OpenCode").version("0.4.0")
-
-common(program.command("install").description("Install all managed OpenCode resources").option("--mode <mode>", "install mode: lite or standard (default: lite)")).action(async (options: Options) => {
+target(program.command("install").description("Install or update the skill in the selected scope")
+  .option("--with-opencode-command", "install /plan-spec even without a project OpenCode marker")
+  .option("--without-opencode-command", "omit /plan-spec even when OpenCode is detected")).action(async (options: Options) => {
   intro("plan-spec install")
-  const standard = (await currentInstallMode(options.mode)) === "standard"
-  const result = await install(options, {
-    gitee: await secret("Gitee access token", standard, Boolean(options.skipSecrets || options.yes)),
-    context7: await secret("Context7 API key", standard, Boolean(options.skipSecrets || options.yes)),
-  })
-  outro(`Installed into ${result.dir}. Run /connect and choose OpenCode Go, then restart OpenCode.`)
+  const result = await install(options)
+  outro(`Installed ${result.scope} skill into ${result.target}${result.routing ? `; project AGENTS.md routing is ready; OpenCode command ${result.command ? "installed" : "not installed"}` : ""}.`)
 })
 
-common(program.command("config").description("Reapply managed configuration and optionally update secrets")).action(async (options: Options) => {
-  intro("plan-spec config")
-  const standard = (await currentInstallMode()) === "standard"
-  const result = await install(options, {
-    gitee: await secret("New Gitee access token", standard, Boolean(options.skipSecrets || options.yes)),
-    context7: await secret("New Context7 API key", standard, Boolean(options.skipSecrets || options.yes)),
-  })
-  outro(`Configuration updated: ${result.planSpecConfig}`)
-})
-
-program.command("doctor").description("Verify the installation").option("--config-dir <path>").option("--json", "JSON output").action(async (options: Options & { json?: boolean }) => {
+target(program.command("doctor").description("Check the selected installation")).option("--json", "JSON output").action(async (options: Options & { json?: boolean }) => {
   const checks = await doctor(options)
   if (options.json) console.log(JSON.stringify(checks, null, 2))
   else for (const check of checks) log.message(`${check.ok ? "OK" : "WARN"} ${check.name}: ${check.detail}`)
-  if (checks.some((check) => !check.ok && !check.detail.includes("Optional"))) process.exitCode = 1
+  if (checks.some((check) => !check.ok)) process.exitCode = 1
 })
 
-program.command("uninstall").description("Remove unmodified managed resources").option("--config-dir <path>").action(async (options: Options) => {
+target(program.command("uninstall").description("Remove the selected installation without discarding user edits")).action(async (options: Options) => {
   const preserved = await uninstall(options)
-  outro(preserved.length ? `Removed managed resources; preserved modified files: ${preserved.join(", ")}` : "Removed managed resources. Secret files were retained.")
+  outro(preserved.length ? `Preserved modified files; review and rerun uninstall: ${preserved.join(", ")}` : "Removed the selected installation.")
+})
+
+const command = program.command("command").description("Manage only the optional OpenCode /plan-spec command")
+command.command("install").description("Install the project command without changing skills or AGENTS.md")
+  .option("--project-dir <path>", "project directory (default: current working directory)")
+  .action(async (options: Pick<Options, "projectDir">) => {
+    outro(`Installed OpenCode command: ${await installCommand(options)}`)
+  })
+command.command("uninstall").description("Remove the command only if it is unmodified and managed by this installer")
+  .option("--project-dir <path>", "project directory (default: current working directory)")
+  .action(async (options: Pick<Options, "projectDir">) => {
+    outro(`Removed OpenCode command: ${await uninstallCommand(options)}`)
+  })
+
+program.command("legacy-uninstall").description("Explicitly clean up a previous global lite/standard installation").action(async () => {
+  const preserved = await uninstallLegacy()
+  outro(preserved.length ? `Preserved modified legacy resources; review before retrying: ${preserved.join(", ")}` : "Removed the legacy global installation. Existing secrets were retained.")
 })
 
 program.parseAsync().catch((error) => { console.error(error instanceof Error ? error.message : error); process.exitCode = 1 })

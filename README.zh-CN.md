@@ -2,241 +2,86 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-通过一条命令为 OpenCode 安装和管理计划先行的工作流。工作流提供两种安装模式：
+为 OpenCode V2 和 Codex 安装共享的项目任务规划与执行技能。仅在用户明确要求使用技能时调用；不会自动接管普通开发请求。
 
-- **lite（默认）**：只安装 `plan-spec` 技能和一份轻量的 `AGENTS.md` 路由区块，不安装子 agent、
-  不安装触发插件，也不写入 `plan-spec.jsonc`。
-- **standard**：在 lite 基础上额外安装显式触发插件、五个职责明确的子 agent，以及这些 agent
-  使用的 MCP 配置。
+## 安装
 
-本项目替代了 [`wagzhi/opencode-config`](https://github.com/wagzhi/opencode-config)
-通过配置仓库手工分发 OpenCode 配置的方式。现在无需再将配置仓库克隆到
-`~/.config/opencode`、复制个人配置模板，或使用 `.env` 维护受管 MCP 的密钥。
-
-## 前置条件
-
-- 已安装 [OpenCode](https://opencode.ai/)，并可从 `PATH` 调用
-- Node.js 20 或更高版本，包含 `npx`
-- OpenCode 启动时可使用 [Bun](https://bun.sh/) 安装 npm 插件
-- 用于 Gitee 操作的 Gitee Access Token（可选）
-- 用于查询第三方文档的 Context7 API Key（可选）
-
-默认 agent 模型使用 OpenCode Go。安装后请在 OpenCode 中执行 `/connect`，并选择
-**OpenCode Go** 完成认证。
-
-## 快速开始
-
-1. 运行安装程序，默认安装 **lite** 模式：
-
-   ```sh
-   npx @wagzhi/plan-spec install
-   ```
-
-   需要完整能力时改为安装 standard 模式：
-
-   ```sh
-   npx @wagzhi/plan-spec install --mode standard
-   ```
-
-   standard 模式会提示输入 Gitee Access Token 和 Context7 API Key，两项都可以留空，稍后再配置。
-
-2. 启动 OpenCode，执行 `/connect` 并选择 **OpenCode Go**，然后重启 OpenCode，使其加载新安装的
-   插件和配置。lite 模式没有插件，重启仍可确保技能和路由区块生效。
-
-3. 验证安装结果：
-
-   ```sh
-   npx @wagzhi/plan-spec doctor
-   ```
-
-4. 在 OpenCode 中使用任一支持的形式显式发起 plan-spec 请求：
-
-   ```text
-   /plan-spec 实现用户认证
-   plan-spec 修复结算回归问题
-   /psw 迁移 API 客户端
-   psw 重构配置加载器
-   ```
-
-## 安装模式
-
-| 模式 | 安装内容 | 触发方式 |
-| --- | --- | --- |
-| `lite`（默认） | `skills/plan-spec/` 和 lite 版 `AGENTS.md` 路由区块 | 依据路由区块识别显式的 `plan-spec` / `psw` 请求 |
-| `standard` | lite 全部内容，外加插件、五个子 agent、`plan-spec.jsonc`、MCP 和受管权限 | 插件把 `plan-spec`、`/plan-spec`、`psw`、`/psw` 改写为技能指令 |
-
-技能按能力降级，因此同一份 `SKILL.md` 在两种模式下都可用：存在 `@git-agent` / `@gitee-agent`
-时委托它们，否则由主 agent 直接执行（Gitee 降级为生成草稿、由用户手工同步）。
-
-模式只支持单向就地变更：
-
-- `lite` → `standard`：执行 `install --mode standard`。升级时会记录原有配置，便于之后 `uninstall` 恢复。
-- `standard` → `lite`：拒绝。先执行 `plan-spec uninstall`，再执行 `install --mode lite`。
-- 未传 `--mode` 时，`install` 和 `config` 保持当前模式；首次安装未传 `--mode` 则使用 lite。
-
-## 安装内容
-
-| 资源 | 用途 |
-| --- | --- |
-| `skills/plan-spec/` | 项目计划、执行追踪和结果回填工作流（两种模式） |
-| `@wagzhi/plan-spec-plugin@^0.3.0` | 仅 standard 模式。加载 `plan-spec.jsonc` 并展开显式 plan-spec 请求 |
-| `@ask-agent` | 仅 standard 模式。结合本地代码和第三方文档回答项目问题 |
-| `@doc-agent` | 仅 standard 模式。查询第三方文档、SDK、API 和技术规范 |
-| `@git-agent` | 仅 standard 模式。执行用户请求的本地 Git 操作 |
-| `@gitee-agent` | 仅 standard 模式。处理 Gitee Issue、Pull Request、审查、合并和任务进度 |
-| `@web-debug` | 仅 standard 模式。通过 Chrome DevTools 调试浏览器页面 |
-
-standard 模式还会管理以下 MCP：
-
-| MCP | 用途 |
-| --- | --- |
-| `context7` | 供 `@doc-agent` 和 `@ask-agent` 查询第三方库文档 |
-| `gitee` | 供 `@gitee-agent` 操作 Gitee 仓库和项目 |
-| `chrome_devtools` | 供 `@web-debug` 检查和调试浏览器 |
-
-默认禁止主 agent 直接调用 Context7 和 Chrome DevTools，仅允许对应的专用子 agent 调用，
-从而保持工具路由清晰、可预测。
-
-## 项目中使用
-
-安装本包只会让工作流在全局可用，不会自动为所有项目启用 plan-spec。必须同时满足以下条件：
-
-1. 请求以 `plan-spec`、`/plan-spec`、`psw` 或 `/psw` 开头。
-2. 项目包含 `spec/plan-spec.json`，且 `enabled` 为 `true`。
-
-如果某个项目尚无该文件，第一次显式调用时，Build Mode 会询问是否启用 plan-spec，以及是否关联
-Gitee 项目管理；Plan Mode 只说明后续配置步骤。最小项目配置如下：
-
-```json
-{
-  "enabled": true,
-  "projectManager": { "enabled": false }
-}
-```
-
-启用后，实现计划保存在 `spec/feats/`。Plan Mode 始终保持只读；Build Mode 可以写入计划、
-修改实现、运行检查并回填执行结果。
-
-## 配置管理
-
-使用 `config` 重新应用受管配置、更新密钥、禁用 MCP 或覆盖 agent 模型：
+需要 Node.js 20+。在项目目录中运行：
 
 ```sh
-npx @wagzhi/plan-spec config
+npx @wagzhi/plan-spec install
 ```
 
-禁用一个或多个受管 MCP：
-
-```sh
-npx @wagzhi/plan-spec config --disable-mcp chrome_devtools context7
-```
-
-覆盖一个或多个受管 agent 模型：
-
-```sh
-npx @wagzhi/plan-spec config --model ask-agent=opencode-go/deepseek-v4-pro doc-agent=provider/model
-```
-
-支持的 agent 名称为 `ask-agent`、`doc-agent`、`git-agent`、`gitee-agent` 和
-`web-debug`。
-
-| Agent | 默认模型 |
-| --- | --- |
-| `ask-agent` | `opencode-go/deepseek-v4-flash` |
-| `doc-agent` | `opencode-go/deepseek-v4-flash` |
-| `git-agent` | `opencode-go/deepseek-v4-flash` |
-| `gitee-agent` | `opencode-go/deepseek-v4-flash` |
-| `web-debug` | `opencode-go/deepseek-v4-flash-vision-exp` |
-
-其他安装参数：
-
-| 参数 | 说明 |
-| --- | --- |
-| `-y`、`--yes` | 不提示并使用默认选项；不会请求密钥 |
-| `--skip-secrets` | 不请求或更新密钥文件 |
-| `--mode <mode>` | 仅 `install`。选择 `lite`（默认）或 `standard`；可将 lite 就地升级为 standard |
-| `--config-dir <path>` | 使用自定义 OpenCode 全局配置目录 |
-| `--disable-mcp <names...>` | 仅 standard 模式。禁用 `context7`、`gitee` 和/或 `chrome_devtools` |
-| `--model <agent=model...>` | 仅 standard 模式。覆盖受管 agent 的模型 |
-
-未传入 `--config-dir` 时，也可以通过 `OPENCODE_CONFIG_DIR` 指定 OpenCode 配置目录。
-
-## 受管文件
-
-lite 模式只管理：
+不传参数时无需选择范围，直接安装到执行命令的**当前目录**（即使当前目录位于 Git 仓库的子目录）。安装目标包括：
 
 ```text
-~/.config/opencode/
-├── AGENTS.md                   # lite 路由区块
-└── skills/plan-spec/           # plan-spec 技能
-
-~/.plan-spec/
-└── manifest.json               # 安装状态
+<项目>/.agents/skills/plan-spec/SKILL.md
+<项目>/.agents/skills/plan-spec/agents/openai.yaml
+<项目>/AGENTS.md                  # 只管理本工具的标记区块
+<项目>/.opencode/commands/plan-spec.md  # 检测到项目使用 OpenCode 时安装
 ```
 
-standard 模式额外管理：
+指定具体项目（例如 monorepo 中的包）：
+
+```sh
+npx @wagzhi/plan-spec install --project-dir packages/web
+```
+
+仅全局安装技能（**不安装命令，不改任何 AGENTS.md**）：
+
+```sh
+npx @wagzhi/plan-spec install --scope global
+```
+
+安装器只检测目标目录下的 `.opencode/`、`opencode.json` 或 `opencode.jsonc`，以决定是否安装 OpenCode 命令。没有项目级标记但仍需命令时用 `--with-opencode-command`；不希望安装时用 `--without-opencode-command`。显式选择会在后续重复安装中保留；不会仅因标记消失就移除已安装的命令。
+
+如果技能已通过 SkillHub 等方式安装到 `.agents/skills/plan-spec/`，只想补装 OpenCode 命令而不让 npm 安装器接管技能或 `AGENTS.md`，请在项目目录明确执行：
+
+```sh
+npx @wagzhi/plan-spec command install
+npx @wagzhi/plan-spec command uninstall  # 只撤销本安装器管理且未修改的命令
+```
+
+技能本身不会在安装或加载时自动运行上述命令；只有用户明确要求配置命令时才执行。两条命令支持 `--project-dir <path>` 指定项目目录。
+
+`--config-dir <path>` 仅适用于 global 范围，仍按原方式仅为 OpenCode 全局安装技能；项目范围使用 `--project-dir <path>`。重复执行 `install` 会更新未被修改的受管文件；不会覆盖用户改过的技能、命令或项目指令区块。安装器不写 OpenCode 配置、服务配置或密钥文件。
+
+## 使用
+
+在 Codex 中明确调用 `$plan-spec`；若检测到 OpenCode 项目（或显式要求安装命令），可在 OpenCode 中使用：
 
 ```text
-~/.config/opencode/
-├── opencode.jsonc              # 仅注册插件
-├── plan-spec.jsonc             # 受管 agent、MCP 和权限
-└── agents/                     # 五个受管子 agent
-
-~/.plan-spec/
-└── secrets/
-    ├── gitee-access-token
-    └── context7-api-key
+/plan-spec 实现用户登录
+/plan-spec
+/plan-spec 开始
+/plan-spec 补充登录失败时的错误处理
+/plan-spec 执行 spec/feats/001-login-20260928.md
 ```
 
-standard 模式下密钥通过 `{file:...}` 变量引用，不会直接写入 OpenCode 配置。设置
-`PLAN_SPEC_HOME` 可以改变安装状态和密钥的根目录。安装器不会写入 OpenCode 的认证存储，也不会
-创建或修改 `opencode-personal.jsonc`。
+只读规划模式中输入需求会生成草案；不带需求时会询问需求。切换到同一会话的允许写入模式后，若存在本技能形成且可唯一识别的未完成计划，直接调用技能或执行 `/plan-spec 开始` 会续接；未落盘的草案会先按规范落盘。明确的新需求开启新计划，“补充/完善”则迭代当前计划而不直接实现。也可用计划路径明确指定执行目标。只读模式始终不写入；跨会话或目标不唯一时先询问，不自动挑选最新计划。仅做 global 安装时请直接明确要求使用技能。
 
-现有的无关 OpenCode 配置和插件会被保留。本包管理的路径和字段可能在再次运行 `install` 或
-`config` 时被替换。
+工作区检查、任务前修改的保护、测试与结果回填由技能负责。安装技能产生的未提交文件也算原有工作区变更，建议先审阅并自行提交项目配置，或在被询问时确认如何继续。
 
-## 验证与排障
+本包**不管理**插件、子 agent、MCP、Gitee、Context7、令牌、模型或权限。已有项目配置文件不再是技能启用条件；安装器不会删除这些既有文件。
 
-运行适合人工阅读的检查：
+## 检查与卸载
 
 ```sh
 npx @wagzhi/plan-spec doctor
-```
-
-获取结构化输出：
-
-```sh
 npx @wagzhi/plan-spec doctor --json
-```
-
-`doctor` 在两种模式下都会检查 OpenCode 可执行文件和已安装技能；lite 模式额外检查 `AGENTS.md`
-路由区块，standard 模式额外检查受管 agent、插件注册、受管模型、MCP 定义、权限和可选密钥文件。
-如果 OpenCode 没有加载新资源，请完成 `/connect`、重启 OpenCode，然后再次运行 `doctor`。
-
-## 从 `opencode-config` 迁移
-
-安装器替代了旧仓库的手工分发流程，但不会自动删除所有旧文件或旧配置项。
-
-1. 备份当前的 `~/.config/opencode` 目录。
-2. 停止将旧仓库工作区作为安装和更新机制。
-3. 运行 `npx @wagzhi/plan-spec install`，并配置 Gitee 和 Context7 密钥。
-4. 完成 `/connect`，重启 OpenCode，然后运行 `doctor`。
-5. 验证通过后，删除不再需要的重复 MCP 定义、旧路由说明和其他遗留文件。
-
-安装器不管理旧方案中的 `tui.json`、command 文件、个人 provider 模板或
-`opencode-skill-creator` 插件。如果仍需使用，请单独保留和维护。
-
-## 卸载
-
-```sh
 npx @wagzhi/plan-spec uninstall
 ```
 
-卸载程序会删除未修改的受管资源，尽可能恢复原有配置值，并从 `AGENTS.md` 中移除受管区块。
-已被修改的受管文件会保留并报告。密钥文件也会保留，避免意外删除。
+为其他项目或 global 安装运行这些命令时，传入相同的 `--project-dir` 或 `--scope global`（以及必要的 `--config-dir`）。安装记录按范围和项目路径分别保存于 `~/.plan-spec/installations/`；多个项目可以独立安装和卸载。升级已有的项目安装时，仅迁移未被用户修改的旧 `.opencode/skills/plan-spec` 技能；修改过的旧技能会阻止覆盖并保留。卸载只删除未修改的受管文件，只移除 `AGENTS.md` 中未被修改的受管区块；技能的 `plan-spec` 目录为空时一并删除，保留父目录及用户添加的文件。改过的文件会被保留并报告。
 
-## 开发与发布
+## 从旧版迁移
 
-- 本地开发和测试说明：[DEVELOPMENT-GUIDE.md](DEVELOPMENT-GUIDE.md)
-- npm 发布说明：[PUBLISHING.md](PUBLISHING.md)
-- 源码仓库：[wagzhi/plan-spec](https://github.com/wagzhi/plan-spec)
+旧版 lite/standard 全局安装不会因新版项目安装而自动撤销。确认要清理后，显式运行：
+
+```sh
+npx @wagzhi/plan-spec legacy-uninstall
+```
+
+该操作按旧版清单清理能确认归属的全局资源；修改过的内容会保留并报告。旧密钥文件不会自动删除。建议先备份旧版全局 OpenCode 配置，并在完成清理后执行 `doctor` 验证新的项目安装。
+
+开发和发布说明见 [DEVELOPMENT-GUIDE.md](DEVELOPMENT-GUIDE.md) 与 [PUBLISHING.md](PUBLISHING.md)。
