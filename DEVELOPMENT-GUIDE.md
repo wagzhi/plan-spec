@@ -31,7 +31,7 @@ node dist/cli.js uninstall --project-dir $project
 Remove-Item Env:PLAN_SPEC_HOME
 ```
 
-在工作仓库的子目录运行 `install` 且不传 `--project-dir` 时，只安装到该子目录，不自动上溯到 Git 根目录。运行 `/plan-spec <需求>` 和 `/plan-spec 执行 <计划路径>` 的人工验收须在安装后的 OpenCode V2 项目会话中进行：检查前者只规划、后者在 Plan Mode 不写入。
+在工作仓库的子目录运行 `install` 且不传 `--project-dir` 时，只安装到该子目录，不自动上溯到 Git 根目录。运行 `/plan-spec <需求>` 和 `/plan-spec 执行 <计划路径>` 的人工验收须在安装后的 OpenCode V2 项目会话中进行：检查前者先规划，后者在只读规划模式下不写入。
 
 另需在隔离项目模拟 SkillHub 安装：自行建立 `.agents/skills/plan-spec/SKILL.md`，运行 `node dist/cli.js command install --project-dir $project` 与 `node dist/cli.js command uninstall --project-dir $project`，确认只创建、移除 `.opencode/commands/plan-spec.md`；不更改既有技能与 `AGENTS.md`。此入口必须由用户明确要求执行，不属于技能安装时的自动脚本。
 

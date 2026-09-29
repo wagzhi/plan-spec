@@ -12,35 +12,35 @@ Requires Node.js 20+. From a project directory:
 npx @wagzhi/plan-spec install
 ```
 
-With no arguments, installation immediately targets the **current working directory**, even when it is a subdirectory of a Git repository. It installs:
+With no arguments, installation immediately targets the **current working directory**, even when it is a subdirectory of a Git repository. A project installation manages:
 
 ```text
 <project>/.agents/skills/plan-spec/SKILL.md
 <project>/.agents/skills/plan-spec/agents/openai.yaml
-<project>/AGENTS.md                  # only the managed block
+<project>/AGENTS.md                         # only the managed block
 <project>/.opencode/commands/plan-spec.md  # when project OpenCode markers are found
 ```
 
-Use `--project-dir packages/web` to select a specific directory in a monorepo. To install **only the skill** globally, with no command or global `AGENTS.md` changes:
+Use `--project-dir packages/web` to select a specific directory in a monorepo. To install **only the OpenCode skill** globally, with no command or global `AGENTS.md` changes:
 
 ```sh
 npx @wagzhi/plan-spec install --scope global
 ```
 
-The installer checks only the target project's `.opencode/`, `opencode.json`, and `opencode.jsonc` for OpenCode usage. Use `--with-opencode-command` to install `/plan-spec` without a marker, or `--without-opencode-command` to omit it. Explicit choices survive reinstallation, and an installed command is not silently removed when markers disappear. `--config-dir` applies only to the global scope, which remains an OpenCode-only global skill install. Running `install` again updates unmodified managed files; user edits are never overwritten. The installer does not manage OpenCode configuration, plugins, agents, MCPs, credentials, models, or permissions.
+The installer checks only the target project's `.opencode/`, `opencode.json`, and `opencode.jsonc` to decide whether to add the OpenCode command; these markers do not control skill activation. Use `--with-opencode-command` to install `/plan-spec` without a marker, or `--without-opencode-command` to omit it. Explicit choices survive reinstallation, and an installed command is not silently removed when markers disappear. `--config-dir` applies only to global scope and selects the OpenCode global configuration directory. Running `install` again updates unmodified managed files; user edits are never overwritten. The installer does not manage OpenCode configuration, plugins, independent subagents, MCPs, credentials, models, or permissions. The skill's `agents/openai.yaml` is Codex invocation metadata, not a managed subagent.
 
-If SkillHub or another manager already installed the skill in `.agents/skills/plan-spec/`, add **only** the optional OpenCode command from the project directory without taking ownership of the skill or `AGENTS.md`:
+If SkillHub or another manager already installed the skill in `.agents/skills/plan-spec/`, run the first command from the project directory to add **only** the optional OpenCode command, without taking ownership of the skill or `AGENTS.md`. Run the second command if you later want to remove it:
 
 ```sh
 npx @wagzhi/plan-spec command install
 npx @wagzhi/plan-spec command uninstall  # removes only an intact command managed by this installer
 ```
 
-These accept `--project-dir <path>`. Installing or loading the skill does not run them automatically; command setup requires an explicit user request.
+These accept `--project-dir <path>`. Installing or loading the skill does not run them automatically; command setup requires an explicit user request. `command install` does not install a skill or add the project routing block; the full `install` manages both and cannot take over a SkillHub-installed skill it does not own.
 
 ## Use
 
-Use `$plan-spec` to invoke the shared skill explicitly in Codex. When the OpenCode command was installed, use:
+Use `$plan-spec` to invoke the shared skill explicitly in Codex. Once the OpenCode project command is installed, use:
 
 ```text
 /plan-spec implement user authentication
@@ -62,7 +62,7 @@ npx @wagzhi/plan-spec doctor --json
 npx @wagzhi/plan-spec uninstall
 ```
 
-Pass the same `--project-dir` or `--scope global` (and `--config-dir` if applicable) for another installation. Independent manifests live under `~/.plan-spec/installations/`. Upgrading an existing project installation migrates only intact old `.opencode/skills/plan-spec` files; edits block migration and remain untouched. Uninstall removes only intact managed files and blocks, then removes the `plan-spec` skill directory if empty. Parent directories and user-added files are preserved; modified resources are reported.
+Pass the same `--project-dir` or `--scope global` (and `--config-dir` if applicable) for another installation. Independent manifests live under `~/.plan-spec/installations/`. Upgrading an existing project installation migrates only intact old `.opencode/skills/plan-spec` files; edits block migration and remain untouched. The full `uninstall` removes only intact managed files and `AGENTS.md` blocks, then removes a managed `plan-spec` skill directory if empty. Parent directories and user-added files are preserved; modified resources are reported. To remove only the optional command, use `command uninstall` above.
 
 ## Previous installations
 

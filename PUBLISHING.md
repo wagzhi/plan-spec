@@ -127,14 +127,14 @@ npm publish --proxy http://127.0.0.1:7897 --https-proxy http://127.0.0.1:7897
 
 ### 目标 token 必须跳过 2FA
 
-若所用 npm 凭据（`.npmrc` 或 `--//registry.npmjs.org/:_authToken=<token>` 传入）不是带“Bypass 2FA for publishing”权限的 granular access token，发布会在鉴权层返回 403，而错误提示仍是网络相关：
+若 npm 返回如下 403，则属于发布鉴权或 2FA 权限问题，不应按网络故障反复重试：
 
 ```text
 npm error code E403
 npm error 403 Forbidden - PUT <url> - Two-factor authentication or granular access token with bypass 2fa enabled is required to publish packages.
 ```
 
-要在 https://www.npmjs.com/settings/<user>/tokens 生成 **Granular Access Token**，权限勾选 **Publish packages** 且**必须勾选 Bypass 2FA**。发布命令用 `--//registry.npmjs.org/:_authToken=<token>` 显式传入该 token（不要把 token 写入公共配置或被 `npm pack` 打进包内）。需先确认对应版本尚未创建（`registry` 返回 `404` 才可重发），避免撞上“同一版本不可覆盖”的限制。
+如使用令牌发布，须在 https://www.npmjs.com/settings/<user>/tokens 创建有相应包发布权限且符合 npm 当前 2FA 要求的令牌；使用可信发布时则检查其配置和权限。不要把令牌写入命令行示例、仓库、公共配置或打包内容。重试发布前用 `npm view @wagzhi/plan-spec@<version> version` 核对该版本是否已存在；已发布的版本不可覆盖。
 
 ## 发布后验证
 

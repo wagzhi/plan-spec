@@ -12,12 +12,12 @@
 npx @wagzhi/plan-spec install
 ```
 
-不传参数时无需选择范围，直接安装到执行命令的**当前目录**（即使当前目录位于 Git 仓库的子目录）。安装目标包括：
+不传参数时无需选择范围，直接安装到执行命令的**当前目录**（即使当前目录位于 Git 仓库的子目录）。项目安装的文件包括：
 
 ```text
 <项目>/.agents/skills/plan-spec/SKILL.md
 <项目>/.agents/skills/plan-spec/agents/openai.yaml
-<项目>/AGENTS.md                  # 只管理本工具的标记区块
+<项目>/AGENTS.md                         # 只管理本工具的标记区块
 <项目>/.opencode/commands/plan-spec.md  # 检测到项目使用 OpenCode 时安装
 ```
 
@@ -27,28 +27,28 @@ npx @wagzhi/plan-spec install
 npx @wagzhi/plan-spec install --project-dir packages/web
 ```
 
-仅全局安装技能（**不安装命令，不改任何 AGENTS.md**）：
+仅全局安装 OpenCode 技能（**不安装命令，不改任何 AGENTS.md**）：
 
 ```sh
 npx @wagzhi/plan-spec install --scope global
 ```
 
-安装器只检测目标目录下的 `.opencode/`、`opencode.json` 或 `opencode.jsonc`，以决定是否安装 OpenCode 命令。没有项目级标记但仍需命令时用 `--with-opencode-command`；不希望安装时用 `--without-opencode-command`。显式选择会在后续重复安装中保留；不会仅因标记消失就移除已安装的命令。
+安装器只检测目标目录下的 `.opencode/`、`opencode.json` 或 `opencode.jsonc`，以决定是否安装 OpenCode 命令；这些标记不决定技能是否启用。没有项目级标记但仍需命令时用 `--with-opencode-command`；不希望安装时用 `--without-opencode-command`。显式选择会在后续重复安装中保留；不会仅因标记消失就移除已安装的命令。
 
-如果技能已通过 SkillHub 等方式安装到 `.agents/skills/plan-spec/`，只想补装 OpenCode 命令而不让 npm 安装器接管技能或 `AGENTS.md`，请在项目目录明确执行：
+如果技能已通过 SkillHub 等方式安装到 `.agents/skills/plan-spec/`，只想补装 OpenCode 命令而不让 npm 安装器接管技能或 `AGENTS.md`，请在项目目录执行第一条命令；撤销时再运行第二条：
 
 ```sh
 npx @wagzhi/plan-spec command install
 npx @wagzhi/plan-spec command uninstall  # 只撤销本安装器管理且未修改的命令
 ```
 
-技能本身不会在安装或加载时自动运行上述命令；只有用户明确要求配置命令时才执行。两条命令支持 `--project-dir <path>` 指定项目目录。
+技能本身不会在安装或加载时自动运行上述命令；只有用户明确要求配置命令时才执行。两条命令支持 `--project-dir <path>` 指定项目目录。仅执行 `command install` 不会安装技能或创建项目路由区块；完整的 `install` 则会管理技能及该区块，不能用于接管 SkillHub 已安装且不归本安装器管理的技能。
 
-`--config-dir <path>` 仅适用于 global 范围，仍按原方式仅为 OpenCode 全局安装技能；项目范围使用 `--project-dir <path>`。重复执行 `install` 会更新未被修改的受管文件；不会覆盖用户改过的技能、命令或项目指令区块。安装器不写 OpenCode 配置、服务配置或密钥文件。
+`--config-dir <path>` 仅适用于 global 范围，用于指定 OpenCode 全局配置目录；项目范围使用 `--project-dir <path>`。重复执行 `install` 会更新未被修改的受管文件；不会覆盖用户改过的技能、命令或项目指令区块。安装器不写 OpenCode 配置、服务配置或密钥文件。
 
 ## 使用
 
-在 Codex 中明确调用 `$plan-spec`；若检测到 OpenCode 项目（或显式要求安装命令），可在 OpenCode 中使用：
+在 Codex 中明确调用 `$plan-spec`；若已安装 OpenCode 项目命令，可在 OpenCode 中使用：
 
 ```text
 /plan-spec 实现用户登录
@@ -62,7 +62,7 @@ npx @wagzhi/plan-spec command uninstall  # 只撤销本安装器管理且未修�
 
 工作区检查、任务前修改的保护、测试与结果回填由技能负责。安装技能产生的未提交文件也算原有工作区变更，建议先审阅并自行提交项目配置，或在被询问时确认如何继续。
 
-本包**不管理**插件、子 agent、MCP、Gitee、Context7、令牌、模型或权限。已有项目配置文件不再是技能启用条件；安装器不会删除这些既有文件。
+本包**不管理**插件、独立子 agent、MCP、Gitee、Context7、令牌、模型或权限。技能目录内的 `agents/openai.yaml` 仅是 Codex 技能调用元数据，并非受管子 agent。已有项目配置文件不是技能启用条件；安装器不会删除这些既有文件。
 
 ## 检查与卸载
 
@@ -72,7 +72,7 @@ npx @wagzhi/plan-spec doctor --json
 npx @wagzhi/plan-spec uninstall
 ```
 
-为其他项目或 global 安装运行这些命令时，传入相同的 `--project-dir` 或 `--scope global`（以及必要的 `--config-dir`）。安装记录按范围和项目路径分别保存于 `~/.plan-spec/installations/`；多个项目可以独立安装和卸载。升级已有的项目安装时，仅迁移未被用户修改的旧 `.opencode/skills/plan-spec` 技能；修改过的旧技能会阻止覆盖并保留。卸载只删除未修改的受管文件，只移除 `AGENTS.md` 中未被修改的受管区块；技能的 `plan-spec` 目录为空时一并删除，保留父目录及用户添加的文件。改过的文件会被保留并报告。
+为其他项目或 global 安装运行这些命令时，传入相同的 `--project-dir` 或 `--scope global`（以及必要的 `--config-dir`）。安装记录按范围和项目路径分别保存于 `~/.plan-spec/installations/`；多个项目可以独立安装和卸载。升级已有的项目安装时，仅迁移未被用户修改的旧 `.opencode/skills/plan-spec` 技能；修改过的旧技能会阻止覆盖并保留。完整的 `uninstall` 只删除未修改的受管文件和 `AGENTS.md` 中未修改的受管区块；受管技能的 `plan-spec` 目录为空时一并删除，保留父目录及用户添加的文件。改过的文件会被保留并报告。若只想撤销可选命令，使用上述 `command uninstall`。
 
 ## 从旧版迁移
 
