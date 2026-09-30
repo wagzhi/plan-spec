@@ -3,6 +3,8 @@ name: plan-spec
 description: "用于根据当前会话上下文规划、完善或执行项目任务计划。仅在用户明确要求使用本技能时调用。"
 ---
 
+<!-- plan-spec-version: 0.5.0 -->
+
 # 计划规范
 
 标准化项目内的任务规划与执行，确保计划先落盘、执行可追溯、结果可回填。
@@ -26,7 +28,7 @@ description: "用于根据当前会话上下文规划、完善或执行项目任
 
 ## 可选的 OpenCode 命令配置
 
-通过 SkillHub 等渠道安装本技能后，**不得仅因安装或加载技能而运行脚本、写入命令文件或修改项目配置**。用户明确要求为当前项目配置 OpenCode 的 `/plan-spec` 命令时，先确认项目目录与写入权限；只读规划模式仅说明做法，不写文件。允许写入的模式下，经用户确认后可在目标项目运行 `npx @wagzhi/plan-spec command install`，或指定 `--project-dir <目录>`。此命令只安装 `.opencode/commands/plan-spec.md`，不接管已由 SkillHub 安装的技能，也不修改 `AGENTS.md`。安装器会拒绝覆盖已有或被用户修改的命令。用户明确要求撤销该命令时，使用 `npx @wagzhi/plan-spec command uninstall`；只有命令仍是受管且未修改时才移除，保留技能和其他项目文件。若 npm/安装器不可用，先说明阻碍，不要静默写入或声称安装成功。
+通过 SkillHub 等渠道安装本技能后，**不得仅因安装或加载技能而运行脚本、写入命令文件或修改项目配置**。用户明确要求为当前项目配置 OpenCode 的 `/plan-spec` 命令时，先确认项目目录与写入权限；只读规划模式仅说明做法，不写文件。允许写入的模式下，经用户确认后可在目标项目运行 `npx @wagzhi/plan-spec command install`，或指定 `--project-dir <目录>`。此命令只安装 `.opencode/commands/plan-spec.md`，不接管已由 SkillHub 安装的技能，也不修改 `AGENTS.md`。安装器会拒绝覆盖已有或被用户修改的命令。用户明确要求升级命令时，可运行 `npx @wagzhi/plan-spec@latest command upgrade`；它只更新未修改的受管命令，不升级 SkillHub 的技能。用户明确要求撤销该命令时，使用 `npx @wagzhi/plan-spec command uninstall`；只有命令仍是受管且未修改时才移除，保留技能和其他项目文件。若 npm/安装器不可用，先说明阻碍，不要静默写入或声称安装成功。
 
 ## 计划阶段
 

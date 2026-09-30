@@ -39,10 +39,11 @@ npx @wagzhi/plan-spec install --scope global
 
 ```sh
 npx @wagzhi/plan-spec command install
+npx @wagzhi/plan-spec@latest command upgrade  # 只升级未修改的受管命令
 npx @wagzhi/plan-spec command uninstall  # 只撤销本安装器管理且未修改的命令
 ```
 
-技能本身不会在安装或加载时自动运行上述命令；只有用户明确要求配置命令时才执行。两条命令支持 `--project-dir <path>` 指定项目目录。仅执行 `command install` 不会安装技能或创建项目路由区块；完整的 `install` 则会管理技能及该区块，不能用于接管 SkillHub 已安装且不归本安装器管理的技能。
+技能本身不会在安装或加载时自动运行上述命令；只有用户明确要求操作命令时才执行。这些命令支持 `--project-dir <path>` 指定项目目录。仅执行 `command install` 不会安装技能或创建项目路由区块；完整的 `install` 则会管理技能及该区块，不能用于接管 SkillHub 已安装且不归本安装器管理的技能。
 
 `--config-dir <path>` 仅适用于 global 范围，用于指定 OpenCode 全局配置目录；项目范围使用 `--project-dir <path>`。重复执行 `install` 会更新未被修改的受管文件；不会覆盖用户改过的技能、命令或项目指令区块。安装器不写 OpenCode 配置、服务配置或密钥文件。
 
@@ -69,8 +70,11 @@ npx @wagzhi/plan-spec command uninstall  # 只撤销本安装器管理且未修�
 ```sh
 npx @wagzhi/plan-spec doctor
 npx @wagzhi/plan-spec doctor --json
+npx @wagzhi/plan-spec@latest upgrade
 npx @wagzhi/plan-spec uninstall
 ```
+
+`upgrade` 使用**当前运行的包版本**，不自行联网下载新版；使用 `@latest` 才会获取 npm 上的最新版。技能、命令和项目 `AGENTS.md` 的受管区块均写有版本号；升级先核验归属与内容，版本相同时不重写，发现修改、缺失或降级时拒绝操作。旧记录没有版本号时按“版本未知”处理，仍需通过哈希校验。升级保持原安装形态，不因项目标记变化增删可选命令；只有命令的安装仅升级命令，不接管 SkillHub 技能。
 
 为其他项目或 global 安装运行这些命令时，传入相同的 `--project-dir` 或 `--scope global`（以及必要的 `--config-dir`）。安装记录按范围和项目路径分别保存于 `~/.plan-spec/installations/`；多个项目可以独立安装和卸载。升级已有的项目安装时，仅迁移未被用户修改的旧 `.opencode/skills/plan-spec` 技能；修改过的旧技能会阻止覆盖并保留。完整的 `uninstall` 只删除未修改的受管文件和 `AGENTS.md` 中未修改的受管区块；受管技能的 `plan-spec` 目录为空时一并删除，保留父目录及用户添加的文件。改过的文件会被保留并报告。若只想撤销可选命令，使用上述 `command uninstall`。
 

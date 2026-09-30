@@ -19,7 +19,7 @@ npm access ls-packages @wagzhi
 
 ## 发布前检查
 
-1. 更新根目录 `package.json` 中待发布包的 `version`，遵循语义化版本。
+1. 更新根目录 `package.json`、`package-lock.json` 与三个受管资源模板中的版本号，遵循语义化版本；运行测试核对版本一致性。
 2. 安装锁定依赖并运行完整检查：
 
 ```powershell
@@ -51,6 +51,7 @@ Push-Location $project
 try {
   node $cli install
   node $cli doctor --json
+  node $cli upgrade  # 同版本不应重写
   node $cli uninstall
 } finally {
   Pop-Location
@@ -77,6 +78,7 @@ Push-Location $project
 try {
   npm exec --yes --package="$tgz" -- plan-spec install
   npm exec --yes --package="$tgz" -- plan-spec doctor --json
+  npm exec --yes --package="$tgz" -- plan-spec upgrade
   npm exec --yes --package="$tgz" -- plan-spec uninstall
 } finally {
   Pop-Location
@@ -84,7 +86,7 @@ try {
 }
 ```
 
-`$tgz` 是打包文件的绝对路径，`npm exec --package` 会将它作为 npm 包执行，不会调用系统关联的压缩软件。`install`、`doctor` 和 `uninstall` 均作用于命令执行时的当前目录。确认 `doctor --json` 所有检查项的 `ok` 为 `true`；卸载后仅清理共享技能的 `plan-spec` 目录，不删除 `.agents/skills`、`.opencode/commands` 等父目录。测试产生的临时目录可在确认后自行清理。
+`$tgz` 是打包文件的绝对路径，`npm exec --package` 会将它作为 npm 包执行，不会调用系统关联的压缩软件（不要写成 `npx exec`）。`install`、`doctor`、`upgrade` 和 `uninstall` 均作用于命令执行时的当前目录。确认 `doctor --json` 所有检查项的 `ok` 为 `true`；卸载后仅清理共享技能的 `plan-spec` 目录，不删除 `.agents/skills`、`.opencode/commands` 等父目录。测试产生的临时目录可在确认后自行清理。
 
 ## 发布
 
@@ -143,6 +145,7 @@ npm error 403 Forbidden - PUT <url> - Two-factor authentication or granular acce
 ```powershell
 npx @wagzhi/plan-spec --help
 npx @wagzhi/plan-spec install --help
+npx @wagzhi/plan-spec upgrade --help
 npm view @wagzhi/plan-spec version dist-tags --json
 ```
 

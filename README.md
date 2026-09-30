@@ -33,10 +33,11 @@ If SkillHub or another manager already installed the skill in `.agents/skills/pl
 
 ```sh
 npx @wagzhi/plan-spec command install
+npx @wagzhi/plan-spec@latest command upgrade  # upgrades only the intact managed command
 npx @wagzhi/plan-spec command uninstall  # removes only an intact command managed by this installer
 ```
 
-These accept `--project-dir <path>`. Installing or loading the skill does not run them automatically; command setup requires an explicit user request. `command install` does not install a skill or add the project routing block; the full `install` manages both and cannot take over a SkillHub-installed skill it does not own.
+These accept `--project-dir <path>`. Installing or loading the skill does not run them automatically; command management requires an explicit user request. `command install` does not install a skill or add the project routing block; the full `install` manages both and cannot take over a SkillHub-installed skill it does not own.
 
 ## Use
 
@@ -59,8 +60,11 @@ Newly installed project files count as working-tree changes. Review and commit t
 ```sh
 npx @wagzhi/plan-spec doctor
 npx @wagzhi/plan-spec doctor --json
+npx @wagzhi/plan-spec@latest upgrade
 npx @wagzhi/plan-spec uninstall
 ```
+
+`upgrade` compares installed resources with the **running package version**; it does not download another release itself. Use `@latest` to obtain the newest npm release. The skill, optional command, and managed `AGENTS.md` block display their package version. An unchanged version is not rewritten; modified or missing resources and downgrades are refused. Old records without version data are treated as unknown and still require hash verification. Upgrades preserve the installed set of components; command-only installations never take ownership of SkillHub skills.
 
 Pass the same `--project-dir` or `--scope global` (and `--config-dir` if applicable) for another installation. Independent manifests live under `~/.plan-spec/installations/`. Upgrading an existing project installation migrates only intact old `.opencode/skills/plan-spec` files; edits block migration and remain untouched. The full `uninstall` removes only intact managed files and `AGENTS.md` blocks, then removes a managed `plan-spec` skill directory if empty. Parent directories and user-added files are preserved; modified resources are reported. To remove only the optional command, use `command uninstall` above.
 

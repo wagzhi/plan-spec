@@ -2,6 +2,7 @@
 description: 使用 plan-spec 技能规划、完善或执行任务计划
 ---
 
-请加载并使用 plan-spec 技能，结合当前会话上下文与运行模式处理以下请求；意图判断、计划归属与读写边界均以技能正文为准。
+<!-- plan-spec-version: 0.5.0 -->
 
-命令参数：$ARGUMENTS
+请加载并使用 plan-spec 技能执行：
+$ARGUMENTS

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { intro, outro, log } from "@clack/prompts"
 import { Command } from "commander"
-import { doctor, install, installCommand, Options, uninstall, uninstallCommand, uninstallLegacy } from "./lib.js"
+import { doctor, install, installCommand, Options, packageVersion, uninstall, uninstallCommand, uninstallLegacy, upgrade, upgradeCommand } from "./lib.js"
 
 function target(command: Command) {
   return command.option("--scope <scope>", "installation scope: project (default) or global", "project")
@@ -9,7 +9,7 @@ function target(command: Command) {
     .option("--config-dir <path>", "OpenCode global configuration directory (global scope only)")
 }
 
-const program = new Command().name("plan-spec").description("Install the plan-spec skill for OpenCode and Codex").version("0.5.0")
+const program = new Command().name("plan-spec").description("Install the plan-spec skill for OpenCode and Codex").version(await packageVersion())
 
 target(program.command("install").description("Install or update the skill in the selected scope")
   .option("--with-opencode-command", "install /plan-spec even without a project OpenCode marker")
@@ -24,6 +24,11 @@ target(program.command("doctor").description("Check the selected installation"))
   if (options.json) console.log(JSON.stringify(checks, null, 2))
   else for (const check of checks) log.message(`${check.ok ? "OK" : "WARN"} ${check.name}: ${check.detail}`)
   if (checks.some((check) => !check.ok)) process.exitCode = 1
+})
+
+target(program.command("upgrade").description("Upgrade intact managed files using this package version")).action(async (options: Options) => {
+  const result = await upgrade(options)
+  outro(result.changed ? `Upgraded ${result.scope} installation at ${result.target} to ${result.version}.` : `Already at ${result.version}; no files changed.`)
 })
 
 target(program.command("uninstall").description("Remove the selected installation without discarding user edits")).action(async (options: Options) => {
@@ -41,6 +46,12 @@ command.command("uninstall").description("Remove the command only if it is unmod
   .option("--project-dir <path>", "project directory (default: current working directory)")
   .action(async (options: Pick<Options, "projectDir">) => {
     outro(`Removed OpenCode command: ${await uninstallCommand(options)}`)
+  })
+command.command("upgrade").description("Upgrade only the intact managed OpenCode command")
+  .option("--project-dir <path>", "project directory (default: current working directory)")
+  .action(async (options: Pick<Options, "projectDir">) => {
+    const result = await upgradeCommand(options)
+    outro(result.changed ? `Upgraded OpenCode command at ${result.file} to ${result.version}.` : `OpenCode command already at ${result.version}; no files changed.`)
   })
 
 program.command("legacy-uninstall").description("Explicitly clean up a previous global lite/standard installation").action(async () => {

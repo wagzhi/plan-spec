@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { execFileSync } from "node:child_process"
 import { createHash } from "node:crypto"
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { access, cp, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises"
 import { platform, tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
@@ -23,6 +23,172 @@ function managedStatePath(home, project) {
   const key = platform() === "win32" ? project.toLowerCase() : project
   return join(home, "installations", `${createHash("sha256").update(`project:${key}`).digest("hex")}.json`)
 }
+
+async function packageFixture(root, version) {
+  const directory = join(root, `package-${version}`)
+  await mkdir(directory)
+  await cp(join(process.cwd(), "dist"), join(directory, "dist"), { recursive: true })
+  await cp(join(process.cwd(), "assets"), join(directory, "assets"), { recursive: true })
+  await symlink(join(process.cwd(), "node_modules"), join(directory, "node_modules"), platform() === "win32" ? "junction" : "dir")
+  await writeFile(join(directory, "package.json"), JSON.stringify({ version, type: "module" }))
+  return (args, env, cwd) => execFileSync(process.execPath, [join(directory, "dist", "cli.js"), ...args], {
+    cwd, env: { ...process.env, ...env }, encoding: "utf8",
+  })
+}
+
+test("installed resources share the package version and an equal-version upgrade does not rewrite them", async () => {
+  const { root, project, home } = await fixture()
+  const env = { PLAN_SPEC_HOME: home }
+  try {
+    await writeFile(join(project, "opencode.jsonc"), "{}\n")
+    run(["install"], env, project)
+    const version = JSON.parse(await readFile(join(process.cwd(), "package.json"), "utf8")).version
+    const skill = join(project, ".agents", "skills", "plan-spec", "SKILL.md")
+    const command = join(project, ".opencode", "commands", "plan-spec.md")
+    const routing = join(project, "AGENTS.md")
+    const files = [skill, command, routing]
+    for (const file of files) assert.match(await readFile(file, "utf8"), new RegExp(`<!-- plan-spec-version: ${version.replaceAll(".", "\\.")} -->`))
+    const state = JSON.parse(await readFile(managedStatePath(home, project), "utf8"))
+    for (const file of files) assert.equal(state.resourceVersions[file], version)
+    const dates = await Promise.all(files.map(async (file) => (await stat(file)).mtimeMs))
+    assert.match(run(["upgrade"], env, project), /no files changed/)
+    assert.deepEqual(await Promise.all(files.map(async (file) => (await stat(file)).mtimeMs)), dates)
+    assert.ok(JSON.parse(run(["doctor", "--json"], env, project)).every((check) => check.ok))
+    run(["uninstall"], env, project)
+  } finally { await rm(root, { recursive: true, force: true }) }
+})
+
+test("published asset markers and CLI version match the package version", async () => {
+  const version = JSON.parse(await readFile(join(process.cwd(), "package.json"), "utf8")).version
+  assert.match(run(["--version"], {}, process.cwd()), new RegExp(`^${version.replaceAll(".", "\\.")}\\s*$`))
+  for (const file of ["assets/skills/plan-spec/SKILL.md", "assets/commands/plan-spec.md", "assets/templates/plan-spec-project-routing.md"]) {
+    assert.match(await readFile(join(process.cwd(), file), "utf8"), new RegExp(`<!-- plan-spec-version: ${version.replaceAll(".", "\\.")} -->`))
+  }
+})
+
+test("upgrade refuses to claim an untracked SkillHub installation", async () => {
+  const { root, project, home } = await fixture()
+  const env = { PLAN_SPEC_HOME: home }
+  try {
+    const skill = join(project, ".agents", "skills", "plan-spec", "SKILL.md")
+    await mkdir(join(project, ".agents", "skills", "plan-spec"), { recursive: true })
+    await writeFile(skill, "# SkillHub-owned\n")
+    assert.throws(() => run(["upgrade"], env, project), /use install first/)
+    assert.throws(() => run(["command", "upgrade"], env, project), /use command install first/)
+    assert.equal(await readFile(skill, "utf8"), "# SkillHub-owned\n")
+  } finally { await rm(root, { recursive: true, force: true }) }
+})
+
+test("upgrade moves intact legacy version records forward without adding an absent OpenCode command", async () => {
+  const { root, project, home } = await fixture()
+  const env = { PLAN_SPEC_HOME: home }
+  try {
+    const older = await packageFixture(root, "0.5.0")
+    const newer = await packageFixture(root, "0.5.1")
+    older(["install"], env, project)
+    const stateFile = managedStatePath(home, project)
+    const state = JSON.parse(await readFile(stateFile, "utf8"))
+    delete state.resourceVersions
+    await writeFile(stateFile, JSON.stringify(state))
+    // Simulate a real pre-version release: no version marker in files or the managed block.
+    for (const file of Object.keys(state.files)) {
+      const text = (await readFile(file, "utf8")).replace(/<!-- plan-spec-version: 0\.5\.0 -->\r?\n\r?\n/, "")
+      await writeFile(file, text)
+      state.files[file] = createHash("sha256").update(text).digest("hex")
+    }
+    const routingText = (await readFile(state.routing.path, "utf8")).replace(/<!-- plan-spec-version: 0\.5\.0 -->\r?\n/, "")
+    await writeFile(state.routing.path, routingText)
+    state.routing.block = routingText.match(/<!-- plan-spec-package:begin -->[\s\S]*?<!-- plan-spec-package:end -->/)[0]
+    await writeFile(stateFile, JSON.stringify(state))
+    await mkdir(join(project, ".opencode")) // a new marker must not add a command during upgrade
+    assert.match(newer(["upgrade"], env, project), /0\.5\.1/)
+    assert.match(await readFile(join(project, ".agents", "skills", "plan-spec", "SKILL.md"), "utf8"), /plan-spec-version: 0\.5\.1/)
+    assert.match(await readFile(join(project, "AGENTS.md"), "utf8"), /plan-spec-version: 0\.5\.1/)
+    await assert.rejects(access(join(project, ".opencode", "commands", "plan-spec.md")))
+    assert.throws(() => older(["upgrade"], env, project), /Refusing to downgrade/)
+    newer(["uninstall"], env, project)
+  } finally { await rm(root, { recursive: true, force: true }) }
+})
+
+test("upgrade refuses modified or missing managed resources without partially updating", async () => {
+  const { root, project, home } = await fixture()
+  const env = { PLAN_SPEC_HOME: home }
+  try {
+    const older = await packageFixture(root, "0.5.0")
+    const newer = await packageFixture(root, "0.5.1")
+    older(["install", "--with-opencode-command"], env, project)
+    const skill = join(project, ".agents", "skills", "plan-spec", "SKILL.md")
+    const command = join(project, ".opencode", "commands", "plan-spec.md")
+    await writeFile(command, "# User edit\n")
+    assert.throws(() => newer(["upgrade"], env, project), /refusing to upgrade/)
+    assert.match(await readFile(skill, "utf8"), /plan-spec-version: 0\.5\.0/)
+    assert.equal(await readFile(command, "utf8"), "# User edit\n")
+    await rm(command)
+    assert.throws(() => newer(["upgrade"], env, project), /missing or was modified/)
+    assert.match(await readFile(skill, "utf8"), /plan-spec-version: 0\.5\.0/)
+  } finally { await rm(root, { recursive: true, force: true }) }
+})
+
+test("an edited managed AGENTS.md block prevents upgrading other intact files", async () => {
+  const { root, project, home } = await fixture()
+  const env = { PLAN_SPEC_HOME: home }
+  try {
+    const older = await packageFixture(root, "0.5.0")
+    const newer = await packageFixture(root, "0.5.1")
+    older(["install"], env, project)
+    const routing = join(project, "AGENTS.md")
+    await writeFile(routing, (await readFile(routing, "utf8")).replace("## Plan-Spec", "## Edited Plan-Spec"))
+    assert.throws(() => newer(["upgrade"], env, project), /refusing to upgrade/)
+    assert.match(await readFile(join(project, ".agents", "skills", "plan-spec", "SKILL.md"), "utf8"), /plan-spec-version: 0\.5\.0/)
+    assert.match(await readFile(routing, "utf8"), /Edited Plan-Spec/)
+  } finally { await rm(root, { recursive: true, force: true }) }
+})
+
+test("command upgrade never changes a SkillHub skill or unrelated AGENTS.md text", async () => {
+  const { root, project, home } = await fixture()
+  const env = { PLAN_SPEC_HOME: home }
+  try {
+    const older = await packageFixture(root, "0.5.0")
+    const newer = await packageFixture(root, "0.5.1")
+    const skill = join(project, ".agents", "skills", "plan-spec", "SKILL.md")
+    const command = join(project, ".opencode", "commands", "plan-spec.md")
+    await mkdir(join(project, ".agents", "skills", "plan-spec"), { recursive: true })
+    await writeFile(skill, "# SkillHub-owned\n")
+    await writeFile(join(project, "AGENTS.md"), "# User instructions\n")
+    older(["command", "install"], env, project)
+    assert.match(newer(["command", "upgrade"], env, project), /0\.5\.1/)
+    assert.match(await readFile(command, "utf8"), /plan-spec-version: 0\.5\.1/)
+    assert.match(newer(["upgrade"], env, project), /no files changed/)
+    assert.equal(await readFile(skill, "utf8"), "# SkillHub-owned\n")
+    assert.equal(await readFile(join(project, "AGENTS.md"), "utf8"), "# User instructions\n")
+    assert.throws(() => older(["command", "upgrade"], env, project), /Refusing to downgrade/)
+    newer(["command", "uninstall"], env, project)
+  } finally { await rm(root, { recursive: true, force: true }) }
+})
+
+test("a full upgrade preserves the existing command choice and user AGENTS.md content", async () => {
+  const { root, project, home, global } = await fixture()
+  const env = { PLAN_SPEC_HOME: home }
+  try {
+    const older = await packageFixture(root, "0.5.0")
+    const newer = await packageFixture(root, "0.5.1")
+    await writeFile(join(project, "AGENTS.md"), "# Keep this\n")
+    older(["install", "--with-opencode-command"], env, project)
+    await writeFile(join(project, "AGENTS.md"), `${await readFile(join(project, "AGENTS.md"), "utf8")}\n# Extra instructions\n`)
+    newer(["upgrade"], env, project)
+    assert.match(await readFile(join(project, ".opencode", "commands", "plan-spec.md"), "utf8"), /plan-spec-version: 0\.5\.1/)
+    const routing = await readFile(join(project, "AGENTS.md"), "utf8")
+    assert.match(routing, /# Keep this/)
+    assert.match(routing, /# Extra instructions/)
+    assert.match(routing, /plan-spec-version: 0\.5\.1/)
+    assert.equal((routing.match(/plan-spec-package:begin/g) ?? []).length, 1)
+    older(["install", "--scope", "global", "--config-dir", global], env, project)
+    newer(["upgrade", "--scope", "global", "--config-dir", global], env, project)
+    assert.match(await readFile(join(global, "skills", "plan-spec", "SKILL.md"), "utf8"), /plan-spec-version: 0\.5\.1/)
+    newer(["uninstall", "--scope", "global", "--config-dir", global], env, project)
+    newer(["uninstall"], env, project)
+  } finally { await rm(root, { recursive: true, force: true }) }
+})
 
 test("default install puts only skill, command and routing in the current project directory", async () => {
   const { root, project, home, global } = await fixture()

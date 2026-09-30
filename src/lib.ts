@@ -12,6 +12,7 @@ type Installation = {
   scope: Scope
   target: string
   files: Record<string, string>
+  resourceVersions?: Record<string, string>
   opencodeCommandPreference?: boolean
   routing?: { path: string; block: string; created: boolean }
 }
@@ -32,6 +33,42 @@ type LegacyManifest = {
 
 const assets = join(resolve(dirname(fileURLToPath(import.meta.url)), ".."), "assets")
 const marker = /<!-- plan-spec-package:begin -->[\s\S]*?<!-- plan-spec-package:end -->/
+const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..")
+let packageVersionPromise: Promise<string> | undefined
+
+export function packageVersion() {
+  return packageVersionPromise ??= readFile(join(packageRoot, "package.json"), "utf8")
+    .then((text) => (JSON.parse(text) as { version: string }).version)
+}
+
+function renderVersion(content: string, version: string) {
+  if (!/<!-- plan-spec-version: [^>]+ -->/.test(content)) throw new Error("Missing plan-spec version marker in packaged asset.")
+  return content.replace(/<!-- plan-spec-version: [^>]+ -->/g, `<!-- plan-spec-version: ${version} -->`)
+}
+
+// Compare npm-style semver, including prereleases; build metadata does not affect precedence.
+function compareVersion(a: string, b: string) {
+  const parseVersion = (value: string) => {
+    const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(value)
+    if (!match) throw new Error(`Invalid package version in installation record: ${value}`)
+    return { core: match.slice(1, 4).map(Number), pre: match[4]?.split(".") }
+  }
+  const left = parseVersion(a), right = parseVersion(b)
+  for (let i = 0; i < 3; i++) if (left.core[i] !== right.core[i]) return Math.sign(left.core[i] - right.core[i])
+  if (!left.pre && !right.pre) return 0
+  if (!left.pre) return 1
+  if (!right.pre) return -1
+  for (let i = 0; i < Math.max(left.pre.length, right.pre.length); i++) {
+    if (left.pre[i] === undefined) return -1
+    if (right.pre[i] === undefined) return 1
+    if (left.pre[i] === right.pre[i]) continue
+    const x = left.pre[i], y = right.pre[i]
+    const xNumber = /^(0|[1-9]\d*)$/.test(x), yNumber = /^(0|[1-9]\d*)$/.test(y)
+    if (xNumber !== yNumber) return xNumber ? -1 : 1
+    return xNumber ? (BigInt(x) > BigInt(y) ? 1 : -1) : (x > y ? 1 : -1)
+  }
+  return 0
+}
 
 export function planSpecHome() {
   return resolve(process.env.PLAN_SPEC_HOME ?? join(homedir(), ".plan-spec"))
@@ -94,11 +131,13 @@ export async function installCommand(options: Pick<Options, "projectDir">) {
   if (await exists(file) && (!state?.files[file] || hash(await readFile(file)) !== state.files[file])) {
     throw new Error(`Command exists or was modified; refusing to overwrite: ${file}`)
   }
-  const content = await readFile(join(assets, "commands", "plan-spec.md"))
+  const version = await packageVersion()
+  const content = renderVersion(await readFile(join(assets, "commands", "plan-spec.md"), "utf8"), version)
   await mkdir(dirname(file), { recursive: true })
   await writeFile(file, content)
   const installation: Installation = state ?? { version: 1, scope: "project", target, files: {} }
   installation.files[file] = hash(content)
+  installation.resourceVersions = { ...installation.resourceVersions, [file]: version }
   installation.opencodeCommandPreference = true
   await saveInstallation(path, installation)
   return file
@@ -116,6 +155,7 @@ export async function uninstallCommand(options: Pick<Options, "projectDir">) {
     await rm(file)
   }
   delete state.files[file]
+  if (state.resourceVersions) delete state.resourceVersions[file]
   state.opencodeCommandPreference = false
   if (Object.keys(state.files).length || state.routing) await saveInstallation(path, state)
   else await rm(path)
@@ -138,16 +178,17 @@ async function installationFiles(scope: Scope, target: string, withCommand: bool
   return files
 }
 
-export async function install(options: Options) {
+export async function install(options: Options, upgradeCommand?: boolean) {
   const { scope, target } = await resolveTarget(options)
   if (options.withOpencodeCommand && options.withoutOpencodeCommand) throw new Error("Choose only one of --with-opencode-command or --without-opencode-command.")
   if (scope === "global" && (options.withOpencodeCommand || options.withoutOpencodeCommand)) throw new Error("OpenCode command options are only supported for project scope.")
   const path = statePath(scope, target)
   const previous = await loadInstallation(path)
-  const command = scope === "project" && (options.withOpencodeCommand ? true : options.withoutOpencodeCommand ? false : previous?.opencodeCommandPreference ?? (Boolean(previous?.files[commandPath(target)]) || await hasOpencodeMarker(target)))
+  const command = scope === "project" && (upgradeCommand ?? (options.withOpencodeCommand ? true : options.withoutOpencodeCommand ? false : previous?.opencodeCommandPreference ?? (Boolean(previous?.files[commandPath(target)]) || await hasOpencodeMarker(target))))
+  const version = await packageVersion()
   const files = await installationFiles(scope, target, command)
   const routingPath = join(target, "AGENTS.md")
-  const block = scope === "project" ? (await readFile(join(assets, "templates", "plan-spec-project-routing.md"), "utf8")).trim() : undefined
+  const block = scope === "project" ? renderVersion(await readFile(join(assets, "templates", "plan-spec-project-routing.md"), "utf8"), version).trim() : undefined
   const routingExisted = block ? await exists(routingPath) : false
   const existingRouting = routingExisted ? await readFile(routingPath, "utf8") : ""
   const oldSkill = scope === "project" ? oldProjectSkillPath(target) : undefined
@@ -179,7 +220,8 @@ export async function install(options: Options) {
 
   const recorded: Record<string, string> = {}
   for (const { source, dest } of files) {
-    const content = await readFile(source)
+    const sourceContent = await readFile(source, "utf8")
+    const content = source.endsWith("SKILL.md") || source.endsWith("plan-spec.md") ? renderVersion(sourceContent, version) : sourceContent
     await mkdir(dirname(dest), { recursive: true })
     await writeFile(dest, content)
     recorded[dest] = hash(content)
@@ -199,6 +241,7 @@ export async function install(options: Options) {
 
   const manifest: Installation = {
     version: 1, scope, target, files: recorded,
+    resourceVersions: Object.fromEntries([...Object.keys(recorded), ...(block ? [routingPath] : [])].map((file) => [file, version])),
     ...(scope === "project" && (options.withOpencodeCommand || options.withoutOpencodeCommand || previous?.opencodeCommandPreference !== undefined)
       ? { opencodeCommandPreference: options.withOpencodeCommand ? true : options.withoutOpencodeCommand ? false : previous?.opencodeCommandPreference }
       : {}),
@@ -208,12 +251,117 @@ export async function install(options: Options) {
   return { scope, target, files: Object.keys(recorded), routing: scope === "project" ? routingPath : undefined, command }
 }
 
+export async function upgrade(options: Options) {
+  const { scope, target } = await resolveTarget(options)
+  const path = statePath(scope, target)
+  const state = await loadInstallation(path)
+  if (!state) throw new Error(`No ${scope} installation found at ${target}; use install first.`)
+  const resources = [...Object.keys(state.files), ...(state.routing ? [state.routing.path] : [])]
+  if (!resources.length) throw new Error(`No managed resources found at ${target}; use install first.`)
+  const version = await packageVersion()
+  for (const file of resources) {
+    const installed = state.resourceVersions?.[file]
+    if (installed && compareVersion(installed, version) > 0) {
+      throw new Error(`Refusing to downgrade ${file} from ${installed} to ${version}.`)
+    }
+  }
+  // All tracked resources must be intact before changing any of them.
+  for (const [file, expected] of Object.entries(state.files)) {
+    if (!(await exists(file)) || hash(await readFile(file)) !== expected) {
+      throw new Error(`Managed file is missing or was modified; refusing to upgrade: ${file}`)
+    }
+  }
+  if (state.routing) {
+    const text = await readFile(state.routing.path, "utf8").catch(() => "")
+    if (text.match(marker)?.[0] !== state.routing.block) {
+      throw new Error(`Managed AGENTS.md block is missing or was modified; refusing to upgrade: ${state.routing.path}`)
+    }
+  }
+  if (resources.every((file) => state.resourceVersions?.[file] === version)) {
+    return { scope, target, version, changed: false, resources }
+  }
+  const skill = scope === "project" ? projectSkillPath(target) : join(target, "skills", "plan-spec", "SKILL.md")
+  const oldSkill = scope === "project" ? oldProjectSkillPath(target) : undefined
+  const fullInstall = Boolean(state.files[skill] || (oldSkill && state.files[oldSkill]))
+  if (!fullInstall) {
+    const commandFile = commandPath(target)
+    if (scope !== "project" || !state.files[commandFile] || resources.length !== 1) {
+      throw new Error(`Unsupported command-only installation state at ${target}.`)
+    }
+    await installCommand({ projectDir: target })
+  } else {
+    // Upgrade preserves the set of installed components rather than re-detecting OpenCode markers.
+    const command = scope === "project" && Boolean(state.files[commandPath(target)])
+    const targets = new Set<string>(resources)
+    const generated = new Map<string, Buffer>()
+    for (const { source, dest } of await installationFiles(scope, target, command)) {
+      targets.add(dest)
+      const text = await readFile(source, "utf8")
+      generated.set(dest, Buffer.from(source.endsWith("SKILL.md") || source.endsWith("plan-spec.md") ? renderVersion(text, version) : text))
+    }
+    targets.add(path)
+    const before = new Map<string, Buffer | undefined>()
+    for (const file of targets) before.set(file, await readFile(file).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return undefined
+      throw error
+    }))
+    if (state.routing) {
+      const text = before.get(state.routing.path)?.toString("utf8") ?? ""
+      const block = renderVersion(await readFile(join(assets, "templates", "plan-spec-project-routing.md"), "utf8"), version).trim()
+      generated.set(state.routing.path, Buffer.from(text.replace(marker, block)))
+    }
+    try {
+      await install(options, command)
+    } catch (error) {
+      // Restore only changes made by this upgrade; do not overwrite concurrent user edits.
+      const issues: string[] = []
+      for (const [file, original] of before) {
+        try {
+          const current = await readFile(file).catch((readError: NodeJS.ErrnoException) => {
+            if (readError.code === "ENOENT") return undefined
+            throw readError
+          })
+          if (current?.equals(original ?? Buffer.alloc(0)) || (!current && !original)) continue
+          if (current && file !== path && !current.equals(generated.get(file) ?? Buffer.alloc(0))) {
+            issues.push(file)
+            continue
+          }
+          if (original) { await mkdir(dirname(file), { recursive: true }); await writeFile(file, original) }
+          else if (current) await rm(file)
+        } catch { issues.push(file) }
+      }
+      if (issues.length) throw new Error(`Upgrade failed and manual recovery may be needed for: ${issues.join(", ")}. Cause: ${String(error)}`)
+      throw error
+    }
+  }
+  return { scope, target, version, changed: true, resources }
+}
+
+export async function upgradeCommand(options: Pick<Options, "projectDir">) {
+  const { target } = await resolveTarget(options)
+  const state = await loadInstallation(statePath("project", target))
+  const file = commandPath(target)
+  if (!state?.files[file]) throw new Error(`No managed OpenCode command found at ${file}; use command install first.`)
+  if (!(await exists(file)) || hash(await readFile(file)) !== state.files[file]) {
+    throw new Error(`Managed command is missing or was modified; refusing to upgrade: ${file}`)
+  }
+  const version = await packageVersion()
+  const installed = state.resourceVersions?.[file]
+  if (installed && compareVersion(installed, version) > 0) throw new Error(`Refusing to downgrade ${file} from ${installed} to ${version}.`)
+  if (installed === version) return { file, version, changed: false }
+  await installCommand(options)
+  return { file, version, changed: true }
+}
+
 export async function doctor(options: Options) {
   const { scope, target } = await resolveTarget(options)
   const state = await loadInstallation(statePath(scope, target))
   const checks: Array<{ name: string; ok: boolean; detail: string }> = []
   checks.push({ name: "installation", ok: Boolean(state), detail: target })
   if (!state) return checks
+  const versions = new Set([...Object.keys(state.files), ...(state.routing ? [state.routing.path] : [])]
+    .map((file) => state.resourceVersions?.[file] ?? "unknown"))
+  checks.push({ name: "managed versions", ok: true, detail: `${[...versions].join(", ")} (running ${await packageVersion()})` })
   for (const [path, expected] of Object.entries(state.files)) {
     checks.push({ name: basename(path), ok: await exists(path) && hash(await readFile(path)) === expected, detail: path })
   }
@@ -265,6 +413,10 @@ export async function uninstall(options: Options) {
   if (preserved.length) {
     state.files = Object.fromEntries(Object.entries(state.files).filter(([file]) => preserved.includes(file)))
     if (state.routing && !preserved.includes(state.routing.path)) delete state.routing
+    if (state.resourceVersions) {
+      state.resourceVersions = Object.fromEntries(Object.entries(state.resourceVersions)
+        .filter(([file]) => Boolean(state.files[file] || file === state.routing?.path)))
+    }
     await writeFile(path, `${JSON.stringify(state, null, 2)}\n`, "utf8")
   } else await rm(path)
   return preserved

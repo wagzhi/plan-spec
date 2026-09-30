@@ -1,7 +1,7 @@
 {
   "name": "@wagzhi/plan-spec",
   "version": "0.5.0",
-  "description": "Install the plan-spec skill for OpenCode.",
+  "description": "Install the plan-spec skill for OpenCode and Codex.",
   "license": "MIT",
   "type": "module",
   "bin": {
